@@ -94,3 +94,60 @@ export interface Term {
   u: string;
   rows: TermRow[];
 }
+
+/** One broker position row on book.positions, joined to its contract when refdata knows it. */
+export interface BookPos {
+  sym: string;
+  x: string;
+  t: number;
+  pr: string; // NRML | MIS | CNC
+  c?: string;
+  s?: string; // tick subject
+  u?: string;
+  k?: string; // CE | PE | FUT | EQ
+  e?: string; // expiry yyyy-mm-dd
+  K?: number;
+  lot?: number;
+  q: number;
+  oq: number; // overnight quantity
+  m: number; // multiplier
+  avg: number;
+  cl: number; // previous close
+  p: number; // the broker's last price
+  pnl: number;
+  m2m: number;
+  ur: number;
+  rl: number;
+  bq: number;
+  bv: number;
+  sq: number;
+  sv: number;
+  dbq: number;
+  dbv: number;
+  dsq: number;
+  dsv: number;
+}
+
+/** book.positions: the broker's net and day positions, polled every few seconds. */
+export interface Book {
+  ts: number;
+  net: BookPos[];
+  day: BookPos[];
+}
+
+/** book.margins: the equity segment of the broker's margins. */
+export interface Margins {
+  ts: number;
+  on: boolean;
+  net: number; // free to trade with
+  cash: number;
+  open: number;
+  live: number;
+  coll: number;
+  used: number; // debits
+  span: number;
+  exp: number;
+  prem: number;
+  m2mr: number;
+  m2mu: number;
+}

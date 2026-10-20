@@ -103,9 +103,51 @@ ivengine:
   idle_every: 10s                   # recompute anyway so time decay shows with no ticks
   max_spread: 0.30                  # drop quotes whose spread is wider than this fraction of the mid
   weekend_weight: 0.25              # trading-time weight of a non-session day (verify)
+  overnight_weight: 0.25            # weight of a weekday's 15:30-09:15 gap, so books decay close to open (verify)
   forward_strikes: 5                # strikes nearest the money in the parity forward median
   vix_roll_days: 3                  # move to the next monthly pair this many days before near expiry (verify)
   calendar: config/calendar/holidays.csv
+
+# riskengine: the book's Greeks, scenario grid and flags on risk.book. Values marked
+# (verify) are placeholders until checked against the desk's own numbers.
+risk:
+  interval: 1s                      # reprice at most this often
+  ref: NIFTY                        # delta is quoted in lots of this future
+  ref_lot: 75                       # its lot size (verify against the current contract)
+  spot_steps: [-10, -7, -5, -3, -2, -1, -0.5, 0.5, 1, 2, 3, 5, 7, 10]   # % moves; 0 is always added
+  vol_rows: [-5, -2, 2, 5, 10]      # extra vol shifts in points on the grid; 0 is always added
+  vol_cap: 2.5                      # cap on the sqrt(30/DTE) vega scaling for near expiries
+  wide: 0.15                        # flag a leg whose spread is wider than this fraction of the mid
+  widen: 1.0                        # stress cells pay this many extra spreads to liquidate (verify)
+  stale_ms: 60000                   # flag a leg with no tick for this long
+  beta_dn: -1.3                     # VIX points per 1% fall until the spotvol job measures it (verify)
+  beta_up: -0.5                     # VIX points per 1% rise (verify)
+  und_beta: {BANKNIFTY: 1.2}        # beta to NIFTY until measured (verify)
+  # The riskmon service: minute snapshots, the day's peak and drawdown, and alerts.
+  # Every figure here is a placeholder until the real capital and limits are set.
+  limits:
+    capital: 1000000                # the capital the percentages are of, rupees (verify)
+    loss_limit: 20000               # daily loss limit on today's M2M, rupees (verify)
+    loss_warn: 0.75                 # warn at this fraction of the limit; crit at 1.0 (verify)
+    worst_pct: 5                    # warn when the worst grid cell (liquidation) loses more than this % of capital (verify)
+    worst_move: 5                   # ...counting only cells within this % spot move, so a ±10% tail does not alarm all day (verify)
+    margin_warn: 0.80               # margin used / (used + free) (verify)
+    margin_crit: 0.90               # (verify)
+    delta_band: 2.0                 # warn when |net delta| exceeds this many NIFTY lots (verify)
+    drawdown: 0                     # warn when M2M falls this many rupees from the day's peak; 0 is off (verify)
+    stale: 30s                      # crit when risk.book or book.margins stops for this long in session
+    flag_after: 2m                  # warn when a flagged or unmodelled leg stays so this long
+
+# The botmon service watches the algo-trading bot (~/algo-trading, launchd
+# com.akash.algo-daily) through its SQLite ledger, mounted read-only at /bot.
+# It never writes the ledger and never sends an order.
+bot:
+  name: rotation
+  dir: /bot                         # holds ledger_<mode>.db; empty turns botmon off
+  mode: paper                       # paper: the ledger is the only book, nothing to reconcile
+  run_at: "18:05:00"                # the daily_eod.py run, IST, trading days only
+  grace: 30m                        # warn when the run has not landed this long after run_at
+  poll: 1m
 
 # Daily timetable for `jobs schedule`, IST. trading_day_only skips weekends and holidays.
 schedule:
@@ -118,5 +160,6 @@ schedule:
   - {at: "19:00", job: bhav, trading_day_only: true}
   - {at: "19:05", job: partoi, trading_day_only: true}
   - {at: "19:10", job: vix, trading_day_only: true}
+  - {at: "19:15", job: spotvol, trading_day_only: true}
   - {at: "19:30", job: gaps, trading_day_only: true}
   - {at: "01:30", job: backup}

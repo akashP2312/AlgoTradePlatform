@@ -145,3 +145,63 @@ func lower(s string) string {
 	}
 	return string(b)
 }
+
+// Book is the broker's positions, published on book.positions every poll and kept
+// in KV book/positions. Rows are Kite's, enriched with the contract so the panel can
+// join them to ticks; quantities are units, money is rupees.
+type Book struct {
+	TS  int64     `json:"ts"`
+	Net []BookPos `json:"net"`
+	Day []BookPos `json:"day"`
+}
+
+type BookPos struct {
+	Sym     string  `json:"sym"` // NIFTY26OCT25400CE
+	Exch    string  `json:"x"`
+	Token   uint32  `json:"t"`
+	Product string  `json:"pr"`          // NRML | MIS | CNC
+	C       string  `json:"c,omitempty"` // contract string; empty when refdata does not know the symbol
+	Subj    string  `json:"s,omitempty"` // tick subject
+	Und     string  `json:"u,omitempty"`
+	Kind    string  `json:"k,omitempty"` // CE | PE | FUT | EQ
+	Expiry  string  `json:"e,omitempty"` // 2026-10-27
+	Strike  float64 `json:"K,omitempty"`
+	Lot     int     `json:"lot,omitempty"`
+
+	Qty        int64   `json:"q"`
+	Overnight  int64   `json:"oq"`
+	Mult       float64 `json:"m"`
+	Avg        float64 `json:"avg"`
+	Close      float64 `json:"cl"`
+	LTP        float64 `json:"p"`
+	PnL        float64 `json:"pnl"`
+	M2M        float64 `json:"m2m"`
+	Unrealised float64 `json:"ur"`
+	Realised   float64 `json:"rl"`
+	BuyQty     int64   `json:"bq"`
+	BuyValue   float64 `json:"bv"`
+	SellQty    int64   `json:"sq"`
+	SellValue  float64 `json:"sv"`
+	DayBuyQty  int64   `json:"dbq"`
+	DayBuyVal  float64 `json:"dbv"`
+	DaySellQty int64   `json:"dsq"`
+	DaySellVal float64 `json:"dsv"`
+}
+
+// Margins is the equity segment of /user/margins, on book.margins and KV
+// book/margins.
+type Margins struct {
+	TS            int64   `json:"ts"`
+	Enabled       bool    `json:"on"`
+	Net           float64 `json:"net"` // free to trade with
+	Cash          float64 `json:"cash"`
+	Opening       float64 `json:"open"`
+	Live          float64 `json:"live"`
+	Collateral    float64 `json:"coll"`
+	Debits        float64 `json:"used"`
+	Span          float64 `json:"span"`
+	Exposure      float64 `json:"exp"`
+	Premium       float64 `json:"prem"`
+	M2MRealised   float64 `json:"m2mr"`
+	M2MUnrealised float64 `json:"m2mu"`
+}

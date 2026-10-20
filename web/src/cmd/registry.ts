@@ -18,6 +18,9 @@ export const FNS: Fn[] = [
   { code: "GP", title: "Graph price: 1m candles, volume, OI, ±1d σ bands (GP 3D for 3 sessions)", sec: "required", built: true },
   { code: "OMON", title: "Option monitor: chain with IV, greeks, OI and ΔOI (OMON X2 for the next expiry)", sec: "required", built: true },
   { code: "STRD", title: "Straddle: ATM straddle through the day vs prior sessions, breakevens, implied move (STRD 25000 3D)", sec: "required", built: true },
+  { code: "POS", title: "Positions: the broker book repriced live, margins, and the zero-shock check against the broker P&L", sec: "none", built: true },
+  { code: "RISK", title: "Risk: scenario grid, P&L vs spot, gamma by strike, intraday M2M, loss limit and alerts", sec: "none", built: true },
+  { code: "BOT", title: "Bot: the algo-trading bot's ledger, daily-run heartbeat, positions, proposed orders, trades (read-only)", sec: "none", built: true },
   { code: "W", title: "Workspaces: W, W <name>, W SAVE <name>, W DEL <name>", sec: "none", built: true },
   { code: "HELP", title: "Keys and functions", sec: "none", built: true },
 ];

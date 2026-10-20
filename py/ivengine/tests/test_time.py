@@ -69,3 +69,21 @@ def test_parse_duration(s, want):
 def test_parse_duration_rejects(s):
     with pytest.raises(ValueError):
         clock.parse_duration(s)
+
+
+def test_overnight_weight():
+    tc = tte.TradingClock(cal(), 0.25, 0.25)
+    assert tc.year_days == pytest.approx(252 * 1.25 + 113 * 0.25)
+    assert tc.per_day == pytest.approx(tc.year_days / 1.25)
+    # Mon 19 Oct close to Wed 21 Oct open, around the Tue holiday: the Monday evening
+    # and Wednesday morning share one overnight weight, the holiday a weekend weight.
+    a = clock.at(date(2026, 10, 19), "15:30")
+    b = clock.at(date(2026, 10, 21), "09:15")
+    off_mon = (24 - 15.5) / (24 - 6.25)
+    off_wed = 9.25 / (24 - 6.25)
+    assert tc.days(a, b) == pytest.approx(0.25 * (off_mon + off_wed) + 0.25)
+    # A weekday close to close is 1 + overnight_weight.
+    w = clock.at(date(2026, 10, 21), "15:30")
+    assert tc.days(w, clock.at(date(2026, 10, 22), "15:30")) == pytest.approx(1.25)
+    # Zero keeps the session-only clock.
+    assert tte.TradingClock(cal(), 0.25, 0.0).days(w, clock.at(date(2026, 10, 22), "09:15")) == 0.0

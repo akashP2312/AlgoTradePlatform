@@ -156,11 +156,11 @@ class ExpiryResult:
 
 
 class Engine:
-    def __init__(self, book: Book, cal: Calendar, params: Params, weekend_weight: float = 0.25):
+    def __init__(self, book: Book, cal: Calendar, params: Params, weekend_weight: float = 0.25, overnight_weight: float = 0.0):
         self.book = book
         self.cal = cal
         self.p = params
-        self.clock = tte.TradingClock(cal, weekend_weight)
+        self.clock = tte.TradingClock(cal, weekend_weight, overnight_weight)
 
     # ---- one expiry -------------------------------------------------------
 
@@ -213,7 +213,7 @@ class Engine:
                 if age is not None:
                     ages.append(age)
                 v = black76.iv(m, F, k, T, call, df) if m is not None else None
-                g = black76.greeks(F, k, T, v, call, df, self.clock.year_days) if v else None
+                g = black76.greeks(F, k, T, v, call, df, self.clock.per_day) if v else None
                 row[side] = {
                     "b": q.bid or None, "a": q.ask or None, "mid": _r(m, 4), "spr": _r(spr, 4),
                     "iv": _r(v), "age": age,
@@ -234,7 +234,7 @@ class Engine:
 
         payload = {
             "ts": nowms, "u": und, "x": d.isoformat(),
-            "tte": _r(T, 8), "cal": _r(Tc, 8), "dte": _r(T * self.clock.year_days, 4), "df": _r(df, 8), "r": r,
+            "tte": _r(T, 8), "cal": _r(Tc, 8), "dte": _r(T * self.clock.per_day, 4), "df": _r(df, 8), "r": r,
             "f": _r(F, 4), "fsrc": fsrc, "s": spot, "fut": _r(fut, 4),
             "atm": _r(sk["atm"]), "rr25": _r(sk["rr25"]), "bf25": _r(sk["bf25"]),
             "fit": ({**{kk: _r(vv, 8) for kk, vv in fit.svi.params().items()}, "rmse": _r(fit.rmse, 6), "ok": fit.ok, "arb": fit.arb}

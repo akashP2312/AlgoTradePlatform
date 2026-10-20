@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"pmt/internal/clock"
 )
 
 type Config struct {
@@ -27,6 +30,8 @@ type Config struct {
 	Loaders   Loaders    `yaml:"loaders"`
 	Sys       Sys        `yaml:"sys"`
 	Gateway   Gateway    `yaml:"gateway"`
+	Risk      Risk       `yaml:"risk"`
+	Bot       Bot        `yaml:"bot"`
 	Schedule  []Schedule `yaml:"schedule"`
 
 	// Dir is the directory relative paths in the file resolve against (the repo root
@@ -121,6 +126,43 @@ type Gateway struct {
 	Static string        `yaml:"static"` // built web app served at /, when present
 }
 
+// Risk is the part of the risk: section the Go side reads; the riskengine (Python)
+// reads the rest.
+type Risk struct {
+	Ref    string     `yaml:"ref"`
+	Limits RiskLimits `yaml:"limits"`
+}
+
+// RiskLimits drives the riskmon alerts. Rupee figures are absolute; Capital is the
+// base for WorstPct.
+type RiskLimits struct {
+	Capital    float64       `yaml:"capital"`
+	LossLimit  float64       `yaml:"loss_limit"`
+	LossWarn   float64       `yaml:"loss_warn"`
+	WorstPct   float64       `yaml:"worst_pct"`
+	WorstMove  float64       `yaml:"worst_move"` // only grid cells within this % spot move count
+	MarginWarn float64       `yaml:"margin_warn"`
+	MarginCrit float64       `yaml:"margin_crit"`
+	DeltaBand  float64       `yaml:"delta_band"`
+	Drawdown   float64       `yaml:"drawdown"`
+	Stale      time.Duration `yaml:"stale"`
+	FlagAfter  time.Duration `yaml:"flag_after"`
+}
+
+// Bot is the algo-trading bot botmon watches, read from its own SQLite ledger. botmon
+// opens the ledger read-only and never writes to it or to the bot's orders.
+type Bot struct {
+	Name  string        `yaml:"name"`   // bot.<name>.state
+	Dir   string        `yaml:"dir"`    // the bot's data directory; empty disables botmon
+	Mode  string        `yaml:"mode"`   // paper | live: picks ledger_<mode>.db; only live is compared with Kite
+	Poll  time.Duration `yaml:"poll"`   // how often the ledger is read
+	RunAt string        `yaml:"run_at"` // when the bot's daily run starts, IST
+	Grace time.Duration `yaml:"grace"`  // how long after run_at today's run may take
+}
+
+// Ledger is the bot's ledger file.
+func (b Bot) Ledger() string { return filepath.Join(b.Dir, "ledger_"+b.Mode+".db") }
+
 type Schedule struct {
 	At             string `yaml:"at"`
 	Job            string `yaml:"job"`
@@ -198,6 +240,26 @@ func (c *Config) defaults() {
 	defD(&c.Ticker.StaleAfter, 5*time.Second)
 	defD(&c.Ticker.HaltAfter, 30*time.Second)
 	defD(&c.Ticker.SilenceReconnect, 10*time.Second)
+	defF := func(f *float64, v float64) {
+		if *f == 0 {
+			*f = v
+		}
+	}
+	def(&c.Risk.Ref, "NIFTY")
+	defF(&c.Risk.Limits.LossWarn, 0.75)
+	defF(&c.Risk.Limits.WorstMove, 5)
+	defF(&c.Risk.Limits.MarginWarn, 0.8)
+	defF(&c.Risk.Limits.MarginCrit, 0.9)
+	defD(&c.Risk.Limits.Stale, 30*time.Second)
+	defD(&c.Risk.Limits.FlagAfter, 2*time.Minute)
+	def(&c.Bot.Name, "rotation")
+	def(&c.Bot.Mode, "paper")
+	defD(&c.Bot.Poll, time.Minute)
+	def(&c.Bot.RunAt, "18:05:00")
+	defD(&c.Bot.Grace, 30*time.Minute)
+	if c.Bot.Dir != "" && !filepath.IsAbs(c.Bot.Dir) {
+		c.Bot.Dir = filepath.Join(c.Dir, c.Bot.Dir)
+	}
 	defD(&c.Ticker.KVFlush, time.Second)
 	defI(&c.Recorder.BatchRows, 5000)
 	defD(&c.Recorder.FlushEvery, time.Second)
@@ -247,6 +309,23 @@ func (c *Config) validate() error {
 				return fmt.Errorf("config: %s core window exceeds the wide window", u.Name)
 			}
 		}
+	}
+	l := c.Risk.Limits
+	if l.Capital < 0 || l.LossLimit < 0 || l.WorstPct < 0 || l.DeltaBand < 0 || l.Drawdown < 0 {
+		return fmt.Errorf("config: risk.limits values must not be negative")
+	}
+	if l.LossWarn <= 0 || l.LossWarn > 1 {
+		return fmt.Errorf("config: risk.limits.loss_warn must be in (0, 1]")
+	}
+	if l.MarginWarn <= 0 || l.MarginWarn > l.MarginCrit || l.MarginCrit > 1 {
+		return fmt.Errorf("config: risk.limits needs 0 < margin_warn <= margin_crit <= 1")
+	}
+	if b := c.Bot; b.Mode != "paper" && b.Mode != "live" {
+		return fmt.Errorf("config: bot.mode must be paper or live")
+	} else if _, _, _, err := clock.ParseHMS(b.RunAt); err != nil {
+		return fmt.Errorf("config: bot.run_at: %w", err)
+	} else if strings.ContainsAny(b.Name, ".*> ") || b.Name == "" {
+		return fmt.Errorf("config: bot.name must be one subject token")
 	}
 	for _, s := range c.Schedule {
 		if s.Job == "" || s.At == "" {

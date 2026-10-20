@@ -2,10 +2,17 @@
 
 Implied vols use a trading-time clock: each normal session counts one day, spread
 evenly over 09:15-15:30, and each weekend, holiday or special-session day counts
-`weekend_weight` of a day, spread over its 24 hours. The year is 252 trading days
-plus 113 others at that weight, so a vol quoted here is comparable to an annual
-calendar vol over a typical year. The weight (0.25) is a starting point to verify
-against realised weekend moves; nothing downstream assumes its value.
+`weekend_weight` of a day, spread over its 24 hours. The hours outside a normal
+session (15:30 to 09:15 the next morning, split at midnight between the two days)
+count `overnight_weight` of a day, spread over them, so a short-premium book decays
+between the close and the open as the market marks it. The year is 252 trading days
+at 1 + overnight_weight each plus 113 others at weekend_weight, so a vol quoted here
+is comparable to an annual calendar vol over a typical year. Both weights (0.25) are
+starting points to verify against realised weekend and overnight moves; nothing
+downstream assumes their values.
+
+A "day" for theta and the daily sigma is a normal weekday close to close, 1 +
+overnight_weight in trading time (`per_day` of them a year).
 
 Discounting and the VIX use plain calendar time (minutes / 525600).
 
@@ -38,10 +45,13 @@ def _overlap(a0: datetime, a1: datetime, b0: datetime, b1: datetime) -> float:
 
 
 class TradingClock:
-    def __init__(self, cal: Calendar, weekend_weight: float = 0.25):
+    def __init__(self, cal: Calendar, weekend_weight: float = 0.25, overnight_weight: float = 0.0):
         self.cal = cal
         self.w = weekend_weight
-        self.year_days = TRADING_DAYS + weekend_weight * OTHER_DAYS
+        self.ow = overnight_weight
+        self.year_days = TRADING_DAYS * (1.0 + overnight_weight) + weekend_weight * OTHER_DAYS
+        # Weekdays (close to close) a year: theta is per one of these.
+        self.per_day = self.year_days / (1.0 + overnight_weight)
 
     def days(self, now: datetime, expiry: datetime) -> float:
         """Trading-time days from now to expiry (zero once expired)."""
@@ -52,12 +62,16 @@ class TradingClock:
         last = expiry.astimezone(clock.IST).date()
         while d <= last:
             s = self.cal.session(d)
+            d0 = clock.at(d, "00:00")
+            d1 = d0 + timedelta(days=1)
             if s.kind == "normal":
                 span = (s.close - s.open).total_seconds()
                 total += _overlap(now, expiry, s.open, s.close) / span
+                if self.ow:
+                    off = _overlap(now, expiry, d0, s.open) + _overlap(now, expiry, s.close, d1)
+                    total += self.ow * off / (86400.0 - span)
             else:
-                d0 = clock.at(d, "00:00")
-                total += self.w * _overlap(now, expiry, d0, d0 + timedelta(days=1)) / 86400.0
+                total += self.w * _overlap(now, expiry, d0, d1) / 86400.0
             d += timedelta(days=1)
         return total
 
