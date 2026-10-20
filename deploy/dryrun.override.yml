@@ -30,6 +30,9 @@ services:
   sys:
     environment: *fake
     ports: !override ["127.0.0.1:18090:8090"]
+  gateway:
+    environment: *fake
+    ports: !override ["127.0.0.1:18091:8091"]
 
   # Logs in with the fake request token before anything needs a session.
   dryrun-login:

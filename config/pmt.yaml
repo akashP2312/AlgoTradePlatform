@@ -25,6 +25,7 @@ universe:
       deriv_exchange: NFO
       futures: 2
       wide_expiries: 4
+      monthlies: 3                  # near, next and the one after, for the 30-day VIX across the roll
       wide_strikes: 50
       core_expiries: 3
       core_strikes: 20
@@ -56,7 +57,8 @@ universe:
 
 ticker:
   recentre_steps: 10                # grow the window when spot drifts this many strikes
-  stale_after: 5s                   # index / near future / ATM silence that marks the feed stale
+  stale_after: 5s                   # index and near-future silence that marks an underlying stale
+  halt_after: 30s                   # every token silent, sockets up: an exchange halt (verify threshold)
   silence_reconnect: 10s            # no frames at all for this long forces a reconnect
   kv_flush: 1s
 
@@ -89,6 +91,21 @@ loaders:
 
 sys:
   listen: ${PMT_SYS_LISTEN}         # 127.0.0.1:8090 or the Tailscale address only
+
+gateway:
+  listen: ${PMT_GATEWAY_LISTEN}     # 127.0.0.1:8091 or the Tailscale address only
+  flush: 250ms                      # each tab gets at most one frame per window, latest value per subject
+  static: web/dist                  # the built web app, served at / when present
+
+ivengine:
+  rate: 0.065                       # annual, continuous; verify against the 91-day T-bill (NSE VIX uses it)
+  interval: 1s                      # recompute at most this often, and only when quotes changed
+  idle_every: 10s                   # recompute anyway so time decay shows with no ticks
+  max_spread: 0.30                  # drop quotes whose spread is wider than this fraction of the mid
+  weekend_weight: 0.25              # trading-time weight of a non-session day (verify)
+  forward_strikes: 5                # strikes nearest the money in the parity forward median
+  vix_roll_days: 3                  # move to the next monthly pair this many days before near expiry (verify)
+  calendar: config/calendar/holidays.csv
 
 # Daily timetable for `jobs schedule`, IST. trading_day_only skips weekends and holidays.
 schedule:

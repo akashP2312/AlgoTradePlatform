@@ -1,14 +1,14 @@
 # Personal Market Terminal: Phase 0.
 GO        ?= go
 BIN       := bin
-CMDS      := ticker recorder jobs login backuprec sys fakekite
+CMDS      := ticker recorder jobs login backuprec sys gateway fakekite
 COMPOSE   ?= docker compose
 DEV_DB    ?= postgres://postgres:dev@127.0.0.1:55432/pmt?sslmode=disable
 DEV_NATS  ?= nats://127.0.0.1:54222
 
-.PHONY: all build test test-int vet tidy migrate up down logs ps dryrun dryrun-job dryrun-down restore-test clean
+.PHONY: all build test py-test test-int vet tidy migrate up down logs ps dryrun dryrun-job dryrun-down restore-test clean
 
-all: vet test build
+all: vet test py-test build
 
 build:
 	@mkdir -p $(BIN)
@@ -16,6 +16,10 @@ build:
 
 test:
 	$(GO) test ./...
+
+# The IV engine's tests, in its own uv project.
+py-test:
+	cd py/ivengine && uv run --frozen pytest -q
 
 # Integration tests need the dev Postgres and NATS containers.
 test-int:

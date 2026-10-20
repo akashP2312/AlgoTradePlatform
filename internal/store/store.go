@@ -21,6 +21,15 @@ import (
 
 // Open connects and pings, retrying for up to wait so containers can start in any order.
 func Open(ctx context.Context, url string, wait time.Duration) (*pgxpool.Pool, error) {
+	return open(ctx, url, wait, false)
+}
+
+// OpenReadOnly is Open with every transaction read-only, for the browser-facing API.
+func OpenReadOnly(ctx context.Context, url string, wait time.Duration) (*pgxpool.Pool, error) {
+	return open(ctx, url, wait, true)
+}
+
+func open(ctx context.Context, url string, wait time.Duration, ro bool) (*pgxpool.Pool, error) {
 	if url == "" {
 		return nil, fmt.Errorf("store: database_url is empty")
 	}
@@ -31,6 +40,10 @@ func Open(ctx context.Context, url string, wait time.Duration) (*pgxpool.Pool, e
 	cfg.MaxConns = 8
 	cfg.ConnConfig.RuntimeParams["timezone"] = "Asia/Kolkata"
 	cfg.ConnConfig.RuntimeParams["application_name"] = "pmt"
+	if ro {
+		cfg.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
+		cfg.ConnConfig.RuntimeParams["statement_timeout"] = "10000"
+	}
 	deadline := time.Now().Add(wait)
 	for {
 		pool, err := pgxpool.NewWithConfig(ctx, cfg)

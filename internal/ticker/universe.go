@@ -93,10 +93,7 @@ func build(cfg *config.Config, all []refdata.Inst, spot map[string]float64, toda
 				add(f, 'f')
 			}
 		}
-		exps := refdata.Expiries(insts, ul.DerivExchange, ul.Name, today)
-		if len(exps) > ul.WideExpiries {
-			exps = exps[:ul.WideExpiries]
-		}
+		exps := refdata.WithMonthlies(refdata.Expiries(insts, ul.DerivExchange, ul.Name, today), ul.WideExpiries, ul.Monthlies)
 		width := ul.WideStrikes - trim
 		if width < 1 {
 			width = 1

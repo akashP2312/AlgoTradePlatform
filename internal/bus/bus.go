@@ -20,17 +20,20 @@ const (
 	StreamOrders = "ORDERS"
 	StreamAlerts = "ALERTS"
 
-	KVLast    = "lastvalue"
-	KVSession = "kite_session"
+	KVLast      = "lastvalue"
+	KVAnalytics = "analytics"
+	KVSession   = "kite_session"
 
-	SubjTicks   = "tick.>"
-	SubjChain   = "chain.>"
-	SubjOrder   = "order.update"
-	SubjAlerts  = "alert.>"
-	SubjHealth  = "sys.*.health"
-	SessionKey  = "current"
-	TickPrefix  = "tick."
-	ChainPrefix = "chain."
+	SubjTicks     = "tick.>"
+	SubjChain     = "chain.>"
+	SubjOrder     = "order.update"
+	SubjAlerts    = "alert.>"
+	SubjHealth    = "sys.*.health"
+	SubjFeed      = "sys.ticker.feed" // per-underlying feed state, every second
+	SubjAnalytics = "analytics.>"
+	SessionKey    = "current"
+	TickPrefix    = "tick."
+	ChainPrefix   = "chain."
 )
 
 // Conn bundles the core connection and its JetStream context.
@@ -105,6 +108,8 @@ func Streams() []jetstream.StreamConfig {
 func Buckets() []jetstream.KeyValueConfig {
 	return []jetstream.KeyValueConfig{
 		{Bucket: KVLast, Description: "latest tick per contract", History: 1, Storage: jetstream.MemoryStorage},
+		// Keyed by the analytics subject without its "analytics." prefix.
+		{Bucket: KVAnalytics, Description: "latest value per analytics subject", History: 1, Storage: jetstream.MemoryStorage},
 		// The session entry outlives a calendar day: Kite's token expires around
 		// 06:00 the next morning (verify), and the evening GIFT Nifty watch needs it.
 		{Bucket: KVSession, Description: "Kite access token", History: 5, TTL: 24 * time.Hour, Storage: jetstream.FileStorage},

@@ -26,6 +26,7 @@ type Config struct {
 	BackupRec BackupRec  `yaml:"backuprec"`
 	Loaders   Loaders    `yaml:"loaders"`
 	Sys       Sys        `yaml:"sys"`
+	Gateway   Gateway    `yaml:"gateway"`
 	Schedule  []Schedule `yaml:"schedule"`
 
 	// Dir is the directory relative paths in the file resolve against (the repo root
@@ -53,6 +54,7 @@ type Underlying struct {
 	DerivExchange string `yaml:"deriv_exchange"`
 	Futures       int    `yaml:"futures"`
 	WideExpiries  int    `yaml:"wide_expiries"`
+	Monthlies     int    `yaml:"monthlies"` // the nearest n monthly expiries are streamed even past wide_expiries
 	WideStrikes   int    `yaml:"wide_strikes"`
 	CoreExpiries  int    `yaml:"core_expiries"`
 	CoreStrikes   int    `yaml:"core_strikes"`
@@ -70,6 +72,7 @@ type Universe struct {
 type Ticker struct {
 	RecentreSteps    int           `yaml:"recentre_steps"`
 	StaleAfter       time.Duration `yaml:"stale_after"`
+	HaltAfter        time.Duration `yaml:"halt_after"`
 	SilenceReconnect time.Duration `yaml:"silence_reconnect"`
 	KVFlush          time.Duration `yaml:"kv_flush"`
 }
@@ -109,6 +112,13 @@ type Loaders struct {
 
 type Sys struct {
 	Listen string `yaml:"listen"`
+}
+
+// Gateway is the browser WebSocket service.
+type Gateway struct {
+	Listen string        `yaml:"listen"`
+	Flush  time.Duration `yaml:"flush"`  // per-tab conflation window
+	Static string        `yaml:"static"` // built web app served at /, when present
 }
 
 type Schedule struct {
@@ -186,6 +196,7 @@ func (c *Config) defaults() {
 	defI(&c.Kite.OtherPerSec, 10)
 	defI(&c.Ticker.RecentreSteps, 10)
 	defD(&c.Ticker.StaleAfter, 5*time.Second)
+	defD(&c.Ticker.HaltAfter, 30*time.Second)
 	defD(&c.Ticker.SilenceReconnect, 10*time.Second)
 	defD(&c.Ticker.KVFlush, time.Second)
 	defI(&c.Recorder.BatchRows, 5000)
@@ -197,6 +208,9 @@ func (c *Config) defaults() {
 	defI(&c.Backup.KeepLocalDays, 14)
 	defI(&c.BackupRec.PollSecond, 20)
 	def(&c.Sys.Listen, "127.0.0.1:8090")
+	def(&c.Gateway.Listen, "127.0.0.1:8091")
+	defD(&c.Gateway.Flush, 250*time.Millisecond)
+	def(&c.Gateway.Static, "web/dist")
 	// "${PMT_DATA_DIR}/x" with PMT_DATA_DIR unset expands to "/x"; re-root those.
 	reroot := func(s *string, sub string) {
 		if *s == "" || *s == "/"+sub {

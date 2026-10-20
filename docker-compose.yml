@@ -17,6 +17,7 @@ x-app: &app
     KITE_ROOT_URL: ${KITE_ROOT_URL:-https://api.kite.trade}
     KITE_WS_URL: ${KITE_WS_URL:-wss://ws.kite.trade}
     PMT_SYS_LISTEN: 0.0.0.0:8090
+    PMT_GATEWAY_LISTEN: 0.0.0.0:8091
     PMT_CLOCK_OFFSET: ${PMT_CLOCK_OFFSET:-}
   volumes:
     - appdata:/data
@@ -91,6 +92,29 @@ services:
     command: ["sys"]
     ports: ["127.0.0.1:8090:8090"]
     depends_on: *deps
+
+  # Browser tabs: ticks, analytics and health over /ws. Read-only.
+  gateway:
+    <<: *app
+    command: ["gateway"]
+    ports: ["127.0.0.1:8091:8091"]
+    depends_on: *deps
+
+  # Implied vols, smiles, term structure and a 30-day VIX from the option ticks,
+  # on analytics.* and KV analytics. Reads ticks only; no ports.
+  ivengine:
+    build: {context: ., dockerfile: py/ivengine/Dockerfile}
+    image: pmt-ivengine:phase1
+    restart: unless-stopped
+    environment:
+      PMT_CONTAINER: "1"
+      NATS_URL: nats://nats:4222
+      PMT_CLOCK_OFFSET: ${PMT_CLOCK_OFFSET:-}
+    logging:
+      driver: json-file
+      options: {max-size: 20m, max-file: "5"}
+    depends_on:
+      nats: {condition: service_healthy}
 
   prometheus:
     image: prom/prometheus:v3.5.0

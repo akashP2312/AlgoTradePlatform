@@ -1,6 +1,8 @@
 # build output
 /bin/
 /dist/
+# binaries from a bare `go build ./cmd/...` in the repo root
+/fakekite
 # local runtime data, archives, backups and recorder files
 /data/
 *.jsonl.zst
@@ -9,3 +11,7 @@
 .env
 *.token
 age-key.txt
+# python
+.venv/
+__pycache__/
+.pytest_cache/

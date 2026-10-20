@@ -1,7 +1,11 @@
-# sys re-exports the health of every service, so it is the only target.
+# sys re-exports the health of every service; the gateway adds its own fan-out
+# and conflation counters.
 global:
   scrape_interval: 15s
 scrape_configs:
   - job_name: sys
     static_configs:
       - targets: ["sys:8090"]
+  - job_name: gateway
+    static_configs:
+      - targets: ["gateway:8091"]

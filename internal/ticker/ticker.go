@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -35,10 +36,15 @@ type Service struct {
 	Cal    *calendar.Calendar
 	Notify *notify.Notifier
 
+	// FeedGrace is how long after a socket (re)connects an untouched heartbeat still
+	// counts as ok; DefaultGrace when zero.
+	FeedGrace time.Duration
+
 	token  atomic.Value // string
 	apiKey atomic.Value // string
 	sess   atomic.Pointer[calendar.Session]
 	kick   chan struct{} // asks the control loop to rebuild the universe
+	lkv    jetstream.KeyValue
 
 	mu       sync.Mutex
 	insts    []refdata.Inst
@@ -47,9 +53,11 @@ type Service struct {
 	assign   map[uint32]int
 	guessed  map[string]bool // underlyings whose window was centred without a spot
 	conns    []*kite.WS
+	upSince  []atomic.Int64 // per conn, ms of its last connect
 	last     map[uint32]bus.Tick
 	dirty    map[uint32]struct{}
-	stale    bool
+	feed     FeedStatus
+	lastAny  atomic.Int64 // ms of the last NSE/NFO/BSE/BFO tick on any token
 
 	Ticks, Chains, Rebuilds, PublishErrors atomic.Int64
 }
@@ -70,6 +78,7 @@ func (s *Service) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	s.lkv = lkv
 	sessions, err := kite.WatchSession(ctx, skv)
 	if err != nil {
 		return err
@@ -91,11 +100,17 @@ func (s *Service) Run(ctx context.Context) error {
 	spot := s.kvSpot(ctx, lkv)
 
 	n := max(1, s.Cfg.Kite.WSConnections)
+	s.upSince = make([]atomic.Int64, n)
 	for i := range n {
 		w := &kite.WS{
 			Name: fmt.Sprintf("ws%d", i+1), URL: s.Cfg.Kite.WSURL,
 			Token: func() string { return s.token.Load().(string) }, Silence: s.Cfg.Ticker.SilenceReconnect,
 			Max: s.Cfg.Kite.TokensPerConn, OnPacket: s.onPacket, OnText: s.onText,
+		}
+		w.OnState = func(up bool, _ error) {
+			if up {
+				s.upSince[i].Store(bus.Ms(clock.Now()))
+			}
 		}
 		w.APIKey = s.apiKey.Load().(string)
 		s.conns = append(s.conns, w)
@@ -109,6 +124,7 @@ func (s *Service) Run(ctx context.Context) error {
 	for _, f := range []func(context.Context){
 		func(ctx context.Context) { s.flushLoop(ctx, lkv) },
 		s.minuteLoop,
+		s.feedLoop,
 		s.healthLoop,
 	} {
 		wg.Add(1)
@@ -200,6 +216,7 @@ func (s *Service) loadInstruments(ctx context.Context, wait bool) error {
 			s.insts, s.instDate = insts, d
 			s.mu.Unlock()
 			slog.Info("ticker: instruments loaded", "rows", len(insts), "dump", d)
+			s.pruneLast(ctx, insts)
 			return nil
 		}
 		if !wait {
@@ -344,7 +361,11 @@ func (s *Service) onPacket(p kite.Packet, recv time.Time) {
 		s.mu.Unlock()
 		return // a token from a previous universe still draining
 	}
-	t := p.Tick(in.Contract, recv, Phase(se, in.Exchange, recv))
+	ph := Phase(se, in.Exchange, recv)
+	t := p.Tick(in.Contract, recv, ph)
+	if ph != "x" {
+		s.lastAny.Store(t.Recv)
+	}
 	s.last[p.Token] = t
 	s.dirty[p.Token] = struct{}{}
 	recentre := false
@@ -404,6 +425,35 @@ func (s *Service) onText(raw []byte) {
 func OrderMsgID(data []byte) string {
 	h := sha256.Sum256(bytes.TrimSpace(data))
 	return "order-" + hex.EncodeToString(h[:16])
+}
+
+// pruneLast drops last values for contracts no longer listed (expired, or gone from
+// a changed dump), so readers that seed from the bucket do not rebuild chains for
+// them. The bucket is in memory with no TTL; nothing else removes them.
+func (s *Service) pruneLast(ctx context.Context, insts []refdata.Inst) {
+	if s.lkv == nil {
+		return
+	}
+	live := make(map[string]bool, len(insts))
+	for _, in := range insts {
+		live[in.Key.Subject()] = true
+	}
+	keys, err := s.lkv.ListKeys(ctx)
+	if err != nil {
+		if !errors.Is(err, jetstream.ErrNoKeysFound) {
+			slog.Warn("ticker: last-value prune", "err", err)
+		}
+		return
+	}
+	n := 0
+	for k := range keys.Keys() {
+		if !live[k] && s.lkv.Purge(ctx, k) == nil {
+			n++
+		}
+	}
+	if n > 0 {
+		slog.Info("ticker: pruned last values", "keys", n)
+	}
 }
 
 // flushLoop writes changed ticks to the last-value bucket asynchronously; the
@@ -529,8 +579,134 @@ func Cut(u *Universe, last map[uint32]bus.Tick, minute time.Time, source string)
 	return out
 }
 
-// healthLoop publishes sys.ticker.health every 5 s and alerts once when the feed
-// goes stale in session and once when it recovers.
+// feedLoop classifies each underlying's feed every second from its heartbeat (the
+// index and the nearest future), publishes the result on sys.ticker.feed, and alerts
+// once on every change of the worst state during the session.
+func (s *Service) feedLoop(ctx context.Context) {
+	tk := time.NewTicker(time.Second)
+	defer tk.Stop()
+	th := Thresholds{Stale: s.Cfg.Ticker.StaleAfter, Halt: s.Cfg.Ticker.HaltAfter, Grace: s.FeedGrace}
+	if th.Grace <= 0 {
+		th.Grace = DefaultGrace
+	}
+	prev := FeedClosed
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tk.C:
+		}
+		now := clock.Now()
+		phase := Phase(s.refreshSession(now), "NFO", now)
+		st := s.feedStatus(now, phase, th)
+		if b, err := json.Marshal(st); err == nil {
+			s.Bus.NC.Publish(bus.SubjFeed, b)
+		}
+		if st.State != prev {
+			s.alertFeed(ctx, prev, st)
+			prev = st.State
+		}
+	}
+}
+
+func (s *Service) feedStatus(now time.Time, phase string, th Thresholds) FeedStatus {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	up := 0
+	for _, w := range s.conns {
+		if w.Up() {
+			up++
+		}
+	}
+	ex := Exchange{Last: bus.FromMs(s.lastAny.Load()), AllUp: up == len(s.conns)}
+	st := FeedStatus{At: bus.Ms(now), Phase: phase, Sockets: fmt.Sprintf("%d/%d", up, len(s.conns)),
+		LastAny: s.lastAny.Load(), Und: map[string]UndFeed{}}
+	if s.uni == nil {
+		st.State = worst(st.Und)
+		s.feed = st
+		return st
+	}
+	for und, idx := range s.uni.Index {
+		fut := nearFut(s.uni, und)
+		b := Beat{Index: s.recvOf(idx), Fut: s.recvOf(fut), SocketUp: s.connUp(idx) && (fut == 0 || s.connUp(fut))}
+		b.UpSince = s.upSinceOf(idx)
+		if fut != 0 {
+			if t := s.upSinceOf(fut); t.After(b.UpSince) {
+				b.UpSince = t
+			}
+		}
+		f := UndFeed{State: Classify(now, phase, b, ex, th), IndexAge: ageMs(now, b.Index), FutAge: ageMs(now, b.Fut), Since: st.At}
+		if old, ok := s.feed.Und[und]; ok && old.State == f.State {
+			f.Since = old.Since
+		}
+		st.Und[und] = f
+	}
+	st.State = worst(st.Und)
+	s.feed = st
+	return st
+}
+
+// nearFut is the future of the earliest recorded expiry, 0 if none.
+func nearFut(u *Universe, und string) uint32 {
+	var best time.Time
+	var tok uint32
+	for _, c := range u.Chains {
+		if c.Und == und && c.Fut != 0 && (tok == 0 || c.Expiry.Before(best)) {
+			best, tok = c.Expiry, c.Fut
+		}
+	}
+	return tok
+}
+
+func (s *Service) recvOf(tok uint32) time.Time {
+	if tok == 0 {
+		return time.Time{}
+	}
+	if t, ok := s.last[tok]; ok {
+		return bus.FromMs(t.Recv)
+	}
+	return time.Time{}
+}
+
+// upSinceOf is when the socket a token is assigned to last connected, zero if unknown.
+func (s *Service) upSinceOf(tok uint32) time.Time {
+	i, ok := s.assign[tok]
+	if !ok || i < 0 || i >= len(s.upSince) {
+		return time.Time{}
+	}
+	if ms := s.upSince[i].Load(); ms != 0 {
+		return bus.FromMs(ms)
+	}
+	return time.Time{}
+}
+
+// connUp reports whether the socket a token is assigned to is up.
+func (s *Service) connUp(tok uint32) bool {
+	i, ok := s.assign[tok]
+	if !ok || i < 0 || i >= len(s.conns) {
+		return false
+	}
+	return s.conns[i].Up()
+}
+
+func (s *Service) alertFeed(ctx context.Context, prev string, st FeedStatus) {
+	var bad []string
+	for und, f := range st.Und {
+		if Worse(f.State, FeedOK) {
+			bad = append(bad, strings.ToLower(und)+"="+f.State)
+		}
+	}
+	sort.Strings(bad)
+	switch {
+	case Worse(st.State, FeedOK):
+		s.Notify.Send(ctx, notify.Warn, "feed_"+st.State, "ticker feed %s: sockets %s, %s",
+			st.State, st.Sockets, strings.Join(bad, " "))
+	case Worse(prev, FeedOK):
+		s.Notify.Send(ctx, notify.Info, "feed_recovered", "ticker feed recovered from %s: sockets %s", prev, st.Sockets)
+	}
+}
+
+// healthLoop publishes sys.ticker.health every 5 s; ok follows the feed state.
 func (s *Service) healthLoop(ctx context.Context) {
 	tk := time.NewTicker(5 * time.Second)
 	defer tk.Stop()
@@ -542,61 +718,42 @@ func (s *Service) healthLoop(ctx context.Context) {
 		case <-tk.C:
 		}
 		now := clock.Now()
-		se := s.refreshSession(now)
-		phase := Phase(se, "NFO", now)
 		ticks := s.Ticks.Load()
 		rate := float64(ticks-prevTicks) / 5
 		prevTicks = ticks
 
 		s.mu.Lock()
-		up := 0
-		for _, w := range s.conns {
-			if w.Up() {
-				up++
-			}
+		feed := s.feed
+		tokens, trimmed := 0, 0
+		if s.uni != nil {
+			tokens, trimmed = s.uni.Count(), s.uni.Trimmed
 		}
-		var silent []string
-		age := map[string]string{}
-		for und, tok := range s.uni.Index {
-			t, ok := s.last[tok]
-			a := time.Duration(-1)
-			if ok {
-				a = now.Sub(bus.FromMs(t.Recv))
-				age[und] = a.Round(100 * time.Millisecond).String()
-			} else {
-				age[und] = "never"
-			}
-			if phase == "c" && (a < 0 || a > s.Cfg.Ticker.StaleAfter) {
-				silent = append(silent, und)
-			}
-		}
-		stale := len(silent) > 0 || (phase == "c" && up < len(s.conns))
-		was := s.stale
-		s.stale = stale
-		tokens, trimmed := s.uni.Count(), s.uni.Trimmed
 		s.mu.Unlock()
 
-		switch {
-		case stale && !was:
-			s.Notify.Send(ctx, notify.Warn, "feed_stale", "ticker stale: %d/%d sockets up, silent index: %s",
-				up, len(s.conns), strings.Join(silent, ","))
-		case !stale && was:
-			s.Notify.Send(ctx, notify.Info, "feed_recovered", "ticker recovered: %d/%d sockets up", up, len(s.conns))
-		}
-		h := bus.Health{Service: "ticker", At: bus.Ms(now), OK: !stale, Detail: map[string]string{
-			"phase":   phase,
-			"sockets": fmt.Sprintf("%d/%d", up, len(s.conns)),
+		h := bus.Health{Service: "ticker", At: bus.Ms(now), OK: !Worse(feed.State, FeedOK), Detail: map[string]string{
+			"phase":   feed.Phase,
+			"feed":    feed.State,
+			"sockets": feed.Sockets,
 			"tokens":  fmt.Sprint(tokens),
 			"trimmed": fmt.Sprint(trimmed),
 			"ticks_s": fmt.Sprintf("%.0f", rate),
 			"chains":  fmt.Sprint(s.Chains.Load()),
 			"errors":  fmt.Sprint(s.PublishErrors.Load()),
 		}}
-		for und, a := range age {
-			h.Detail["index_age."+strings.ToLower(und)] = a
+		for und, f := range feed.Und {
+			k := strings.ToLower(und)
+			h.Detail["feed."+k] = f.State
+			h.Detail["index_age."+k] = fmtAge(f.IndexAge)
 		}
 		if b, err := json.Marshal(h); err == nil {
 			s.Bus.NC.Publish(bus.HealthSubject("ticker"), b)
 		}
 	}
+}
+
+func fmtAge(ms int64) string {
+	if ms < 0 {
+		return "never"
+	}
+	return (time.Duration(ms) * time.Millisecond).Round(100 * time.Millisecond).String()
 }
