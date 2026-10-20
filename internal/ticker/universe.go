@@ -93,10 +93,7 @@ func build(cfg *config.Config, all []refdata.Inst, spot map[string]float64, toda
 				add(f, 'f')
 			}
 		}
-		exps := refdata.Expiries(insts, ul.DerivExchange, ul.Name, today)
-		if len(exps) > ul.WideExpiries {
-			exps = exps[:ul.WideExpiries]
-		}
+		exps := withMonthlies(refdata.Expiries(insts, ul.DerivExchange, ul.Name, today), ul.WideExpiries, ul.Monthlies)
 		width := ul.WideStrikes - trim
 		if width < 1 {
 			width = 1
@@ -226,4 +223,35 @@ func Assign(modes map[uint32]byte, prev map[uint32]int, n, perConn int) (map[uin
 		out[t], sets[best][t] = best, modes[t]
 	}
 	return out, sets
+}
+
+// withMonthlies keeps the nearest wide expiries plus the nearest n monthlies (the
+// last listed expiry of each calendar month), which the IV engine's 30-day VIX
+// needs past the weeklies. all is sorted ascending; so is the result.
+func withMonthlies(all []time.Time, wide, n int) []time.Time {
+	out := all
+	if len(out) > wide {
+		out = append([]time.Time(nil), all[:wide]...)
+	}
+	if n <= 0 || len(out) == len(all) {
+		return out
+	}
+	have := make(map[time.Time]bool, len(out))
+	for _, e := range out {
+		have[e] = true
+	}
+	for i, e := range all {
+		if n == 0 {
+			break
+		}
+		last := i == len(all)-1 || all[i+1].Month() != e.Month() || all[i+1].Year() != e.Year()
+		if !last {
+			continue
+		}
+		n--
+		if !have[e] {
+			out = append(out, e)
+		}
+	}
+	return out
 }

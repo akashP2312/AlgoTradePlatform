@@ -9,3 +9,7 @@
 .env
 *.token
 age-key.txt
+# python
+.venv/
+__pycache__/
+.pytest_cache/
