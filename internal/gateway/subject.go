@@ -5,9 +5,10 @@ import (
 	"strings"
 )
 
-// Prefixes a browser may subscribe to. Orders, alerts and the session bucket are
-// not exposed, and nothing a browser sends is ever published to the bus.
-var allowed = []string{"tick.", "analytics.", "sys."}
+// Prefixes a browser may subscribe to. book.* is the broker's positions and margins,
+// read-only. Orders, alerts and the session bucket are not exposed, and nothing a
+// browser sends is ever published to the bus.
+var allowed = []string{"tick.", "analytics.", "sys.", "book."}
 
 // checkSubject validates a subscription: an allowed prefix, no empty tokens,
 // '*' only as a whole token and '>' only as the last one.
@@ -22,7 +23,7 @@ func checkSubject(s string) error {
 		}
 	}
 	if !ok {
-		return fmt.Errorf("%q: subscribe to tick.*, analytics.* or sys.* only", s)
+		return fmt.Errorf("%q: subscribe to tick.*, analytics.*, sys.* or book.* only", s)
 	}
 	toks := strings.Split(s, ".")
 	for i, t := range toks {

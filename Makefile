@@ -1,7 +1,7 @@
 # Personal Market Terminal: Phase 0.
 GO        ?= go
 BIN       := bin
-CMDS      := ticker recorder jobs login backuprec sys gateway fakekite
+CMDS      := ticker recorder jobs login backuprec sys gateway book fakekite
 COMPOSE   ?= docker compose
 DEV_DB    ?= postgres://postgres:dev@127.0.0.1:55432/pmt?sslmode=disable
 DEV_NATS  ?= nats://127.0.0.1:54222

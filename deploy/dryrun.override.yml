@@ -55,6 +55,10 @@ services:
     environment: *fake
     depends_on:
       dryrun-login: {condition: service_completed_successfully}
+  book:
+    environment: *fake
+    depends_on:
+      dryrun-login: {condition: service_completed_successfully}
   recorder:
     environment: *fake
   jobs:

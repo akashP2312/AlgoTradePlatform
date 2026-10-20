@@ -7,6 +7,7 @@ import { effectiveSec, title, type PanelParams } from "../shell";
 import { GpPanel } from "./GpPanel";
 import { MonPanel } from "./MonPanel";
 import { OmonPanel } from "./OmonPanel";
+import { PosPanel } from "./PosPanel";
 import { QPanel } from "./QPanel";
 import { StrdPanel } from "./StrdPanel";
 import { SysPanel } from "./SysPanel";
@@ -32,6 +33,7 @@ export function FnPanel({ params, api }: IDockviewPanelProps<PanelParams>) {
       case "GP": return <GpPanel sec={sec} args={params.args} />;
       case "OMON": return <OmonPanel sec={sec} args={params.args} setArgs={setArgs} />;
       case "STRD": return <StrdPanel sec={sec} args={params.args} setArgs={setArgs} />;
+      case "POS": return <PosPanel />;
       default: return <Placeholder code={params.fn} sec={sec} />;
     }
   })();

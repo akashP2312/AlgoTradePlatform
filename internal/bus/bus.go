@@ -23,6 +23,7 @@ const (
 	KVLast      = "lastvalue"
 	KVAnalytics = "analytics"
 	KVSession   = "kite_session"
+	KVBook      = "book"
 
 	SubjTicks     = "tick.>"
 	SubjChain     = "chain.>"
@@ -31,6 +32,9 @@ const (
 	SubjHealth    = "sys.*.health"
 	SubjFeed      = "sys.ticker.feed" // per-underlying feed state, every second
 	SubjAnalytics = "analytics.>"
+	SubjBook      = "book.>" // book.positions, book.margins: the broker's view, every few seconds
+	BookPositions = "book.positions"
+	BookMargins   = "book.margins"
 	SessionKey    = "current"
 	TickPrefix    = "tick."
 	ChainPrefix   = "chain."
@@ -113,6 +117,8 @@ func Buckets() []jetstream.KeyValueConfig {
 		// The session entry outlives a calendar day: Kite's token expires around
 		// 06:00 the next morning (verify), and the evening GIFT Nifty watch needs it.
 		{Bucket: KVSession, Description: "Kite access token", History: 5, TTL: 24 * time.Hour, Storage: jetstream.FileStorage},
+		// Keyed by the book subject without its "book." prefix: positions, margins.
+		{Bucket: KVBook, Description: "latest positions and margins", History: 1, Storage: jetstream.MemoryStorage},
 	}
 }
 

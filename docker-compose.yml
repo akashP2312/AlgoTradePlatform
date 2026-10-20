@@ -87,6 +87,12 @@ services:
     <<: *app
     command: ["backuprec", "-listen", "0.0.0.0:8091"]
 
+  # The broker's positions and margins on book.*. Read-only.
+  book:
+    <<: *app
+    command: ["book"]
+    depends_on: *deps
+
   sys:
     <<: *app
     command: ["sys"]

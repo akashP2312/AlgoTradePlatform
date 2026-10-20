@@ -72,7 +72,7 @@ func main() {
 	}
 	m := newMarket(clock.Today(), *vol, cal, rules)
 	go m.walk()
-	s := &server{m: m, apiKey: *apiKey, token: *token, orderEvery: *orderEvery}
+	s := &server{m: m, apiKey: *apiKey, token: *token, orderEvery: *orderEvery, book: sampleBook(m, clock.Now())}
 	slog.Info("fakekite: serving", "addr", *listen, "instruments", len(m.insts), "clock_offset", clock.Offset().String())
 	if err := http.ListenAndServe(*listen, s.routes()); err != nil {
 		slog.Error("fakekite", "err", err)
@@ -337,6 +337,7 @@ type server struct {
 	token      string
 	orderEvery time.Duration
 	up         websocket.Upgrader
+	book       []leg // the sample positions; built once at start so trade prices stay fixed
 }
 
 func (s *server) routes() http.Handler {
@@ -349,6 +350,9 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /quote/ltp", s.auth(s.ltp))
 	mux.HandleFunc("GET /instruments/historical/{token}/{interval}", s.auth(s.historical))
 	mux.HandleFunc("GET /user/profile", s.auth(s.profile))
+	mux.HandleFunc("GET /portfolio/positions", s.auth(s.positions))
+	mux.HandleFunc("GET /user/margins", s.auth(s.margins))
+	mux.HandleFunc("GET /user/margins/{seg}", s.auth(s.margins))
 	mux.HandleFunc("GET /ws", s.ws)
 	mux.HandleFunc("GET /{$}", s.ws) // the real ticker serves on the root path
 	mux.HandleFunc("/", s.refuse)
