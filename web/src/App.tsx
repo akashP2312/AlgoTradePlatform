@@ -20,7 +20,9 @@ export function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
-      if (e.key === "`" && !typing && !e.altKey && !e.metaKey && !e.ctrlKey) {
+      // e.code too: on layouts where ` is a dead key (US International, ABC
+      // Extended) e.key is "Dead", not "`".
+      if ((e.key === "`" || e.code === "Backquote") && !typing && !e.altKey && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
         setCmd(true);
         return;
@@ -55,7 +57,7 @@ export function App() {
           onReady={(e) => attach(e.api)}
         />
       </div>
-      <StatusBar />
+      <StatusBar onCommand={() => setCmd(true)} />
       <CommandLine open={cmd} setOpen={setCmd} />
     </div>
   );

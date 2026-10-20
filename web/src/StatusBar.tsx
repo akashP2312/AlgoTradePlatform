@@ -5,7 +5,7 @@ import { usePoll } from "./data/frame";
 import { useLinks, LINKS } from "./cmd/links";
 import { clock } from "./fmt";
 
-export function StatusBar() {
+export function StatusBar({ onCommand }: { onCommand: () => void }) {
   const links = useLinks();
   const v = usePoll(() => ({
     state: feed.status.state,
@@ -21,7 +21,7 @@ export function StatusBar() {
         {LINKS.map((l) => links[l] && <span key={l} className={`chip link-${l}`}>{links[l]}</span>)}
       </span>
       <span className="spacer" />
-      <span className="dim">` command · HELP</span>
+      <span className="dim" style={{ cursor: "pointer" }} title="open the command line" onClick={onCommand}>` command · HELP</span>
       <span className="n clock">{clock(v.now)} IST</span>
     </div>
   );
