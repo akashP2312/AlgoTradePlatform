@@ -1,6 +1,6 @@
-"""The ivengine's view of config/pmt.yaml: the NATS URL, the option underlyings and
-the ivengine section. ${VAR} expands from the environment, unset variables to the
-empty string, as Go's os.ExpandEnv does."""
+"""The ivengine's view of config/pmt.yaml: the NATS URL, the option underlyings, the
+ivengine section and the risk section (kept raw; risksvc parses it). ${VAR} expands
+from the environment, unset variables to the empty string, as Go's os.ExpandEnv does."""
 
 from __future__ import annotations
 
@@ -34,10 +34,12 @@ class Config:
     idle_every: float = 10.0
     max_spread: float = 0.30
     weekend_weight: float = 0.25
+    overnight_weight: float = 0.0
     forward_strikes: int = 5
     vix_roll_days: int = 3
     vix_underlying: str = "NIFTY"
     calendar: str = "config/calendar/holidays.csv"
+    risk: dict = field(default_factory=dict)  # the risk: section, parsed by risksvc
     dir: str = field(default=".")
 
 
@@ -71,10 +73,12 @@ def load(p: str | None = None) -> Config:
         idle_every=_secs(iv.get("idle_every"), 10.0),
         max_spread=float(iv.get("max_spread", 0.30)),
         weekend_weight=float(iv.get("weekend_weight", 0.25)),
+        overnight_weight=float(iv.get("overnight_weight", 0.0)),
         forward_strikes=int(iv.get("forward_strikes", 5)),
         vix_roll_days=int(iv.get("vix_roll_days", 3)),
         vix_underlying=str(iv.get("vix_underlying", "NIFTY")),
         calendar=iv.get("calendar") or "config/calendar/holidays.csv",
+        risk=dict(raw.get("risk") or {}),
         dir=root,
     )
     if not os.path.isabs(c.calendar):

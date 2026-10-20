@@ -52,6 +52,7 @@ class Service:
             Calendar.load(cfg.calendar),
             Params(cfg.rate, cfg.max_spread, cfg.forward_strikes, cfg.vix_roll_days),
             cfg.weekend_weight,
+            cfg.overnight_weight,
         )
         self.dirty: set[tuple[str, date]] = set()
         self.index_dirty: set[str] = set()

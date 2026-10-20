@@ -24,6 +24,7 @@ const (
 	KVAnalytics = "analytics"
 	KVSession   = "kite_session"
 	KVBook      = "book"
+	KVRisk      = "risk"
 
 	SubjTicks     = "tick.>"
 	SubjChain     = "chain.>"
@@ -33,6 +34,7 @@ const (
 	SubjFeed      = "sys.ticker.feed" // per-underlying feed state, every second
 	SubjAnalytics = "analytics.>"
 	SubjBook      = "book.>" // book.positions, book.margins: the broker's view, every few seconds
+	SubjRisk      = "risk.>" // risk.book from the riskengine, risk.beta from the spotvol job
 	BookPositions = "book.positions"
 	BookMargins   = "book.margins"
 	SessionKey    = "current"
@@ -119,6 +121,9 @@ func Buckets() []jetstream.KeyValueConfig {
 		{Bucket: KVSession, Description: "Kite access token", History: 5, TTL: 24 * time.Hour, Storage: jetstream.FileStorage},
 		// Keyed by the book subject without its "book." prefix: positions, margins.
 		{Bucket: KVBook, Description: "latest positions and margins", History: 1, Storage: jetstream.MemoryStorage},
+		// Keyed by the risk subject without its "risk." prefix: book, beta. File storage
+		// so the measured beta survives a NATS restart.
+		{Bucket: KVRisk, Description: "latest book risk and spot-vol beta", History: 1, Storage: jetstream.FileStorage},
 	}
 }
 

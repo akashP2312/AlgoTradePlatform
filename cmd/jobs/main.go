@@ -62,6 +62,7 @@ var jobs = map[string]job{
 	"bhav":         {"[date] load the NSE F&O bhavcopy", bhav},
 	"partoi":       {"[date] load NSE participant-wise open interest", partOI},
 	"vix":          {"[from [to]] load India VIX and index day closes", vix},
+	"spotvol":      {"[-n] [-ref NIFTY] [days] fit the spot-vol and index betas from index_eod; publish risk.beta", spotvol},
 	"backup":       {"dump the database, encrypted with age, into the outbox", backupJob},
 	"restore-test": {"[--keep] restore the latest dump into a scratch database and check counts", restoreTest},
 }

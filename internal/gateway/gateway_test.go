@@ -35,7 +35,7 @@ func TestMatch(t *testing.T) {
 }
 
 func TestCheckSubject(t *testing.T) {
-	ok := []string{"tick.nse.nifty_50._._.idx", "tick.>", "analytics.iv.*", "sys.*.health", "book.positions", "book.>"}
+	ok := []string{"tick.nse.nifty_50._._.idx", "tick.>", "analytics.iv.*", "sys.*.health", "book.positions", "book.>", "risk.book"}
 	bad := []string{"order.update", "orders.>", "tick.", "tick..x", "tick.>.x", "tick.ni*", ">", "kv.session", "tick.a b", strings.Repeat("tick.x", 50)}
 	for _, s := range ok {
 		if err := checkSubject(s); err != nil {

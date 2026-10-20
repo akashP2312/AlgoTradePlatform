@@ -47,7 +47,7 @@ func main() {
 	hub := gateway.NewHub(cfg.Gateway.Flush)
 	// Subscribe before seeding, so nothing published in between is lost and
 	// the seed never overwrites a newer live value.
-	for _, subj := range []string{bus.SubjTicks, bus.SubjAnalytics, bus.SubjHealth, bus.SubjFeed, bus.SubjBook} {
+	for _, subj := range []string{bus.SubjTicks, bus.SubjAnalytics, bus.SubjHealth, bus.SubjFeed, bus.SubjBook, bus.SubjRisk} {
 		sub, err := conn.NC.Subscribe(subj, func(m *nats.Msg) { hub.Publish(m.Subject, m.Data) })
 		if err != nil {
 			app.Fatal("subscribe", err)
@@ -55,7 +55,7 @@ func main() {
 		sub.SetPendingLimits(1<<20, 256<<20)
 		defer sub.Unsubscribe()
 	}
-	for bucket, prefix := range map[string]string{bus.KVLast: bus.TickPrefix, bus.KVAnalytics: "analytics.", bus.KVBook: "book."} {
+	for bucket, prefix := range map[string]string{bus.KVLast: bus.TickPrefix, bus.KVAnalytics: "analytics.", bus.KVBook: "book.", bus.KVRisk: "risk."} {
 		n, err := seed(ctx, conn, hub, bucket, prefix)
 		if err != nil {
 			slog.Warn("gateway: seed from kv failed; panels fill on the next tick", "bucket", bucket, "err", err)

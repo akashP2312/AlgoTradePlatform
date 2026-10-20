@@ -13,6 +13,7 @@ dependencies = [
 
 [project.scripts]
 ivengine = "pmt_iv.service:main"
+riskengine = "pmt_iv.risksvc:main"
 
 [dependency-groups]
 dev = ["pytest>=8"]
