@@ -2,7 +2,7 @@
 // in a new one. Typed text only ever changes the layout; nothing is sent anywhere.
 
 import { useEffect, useRef, useState } from "react";
-import { feed } from "../data/feed";
+import { getRef, securities as refSecurities } from "../data/ref";
 import { load, save } from "../persist";
 import { run } from "../shell";
 import { suggest, type Suggestion } from "./registry";
@@ -10,8 +10,7 @@ import { suggest, type Suggestion } from "./registry";
 const HISTORY = 100;
 
 function securities(): string[] {
-  const und = feed.store.get<{ und?: Record<string, unknown> }>("sys.ticker.feed")?.und;
-  return Object.keys(und ?? {}).sort();
+  return refSecurities(getRef()).map((s) => s.replaceAll(" ", "_"));
 }
 
 export function CommandLine({ open, setOpen }: { open: boolean; setOpen: (o: boolean) => void }) {

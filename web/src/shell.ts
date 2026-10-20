@@ -39,7 +39,8 @@ export function effectiveSec(p: PanelParams): string | undefined {
 
 export function title(p: PanelParams): string {
   const s = effectiveSec(p);
-  return s && fn(p.fn)?.sec !== "none" ? `${s} ${p.fn}` : p.fn;
+  const base = s && fn(p.fn)?.sec !== "none" ? `${s} ${p.fn}` : p.fn;
+  return p.args?.length ? `${base} ${p.args.join(" ")}` : base;
 }
 
 function active(): IDockviewPanel | undefined {

@@ -55,6 +55,14 @@ func DB(ctx context.Context, cfg *config.Config) (*pgxpool.Pool, error) {
 	return store.Open(ctx, cfg.DatabaseURL, time.Minute)
 }
 
+// DBReadOnly opens a read-only Postgres pool.
+func DBReadOnly(ctx context.Context, cfg *config.Config, wait time.Duration) (*pgxpool.Pool, error) {
+	if cfg.DatabaseURL == "" {
+		return nil, fmt.Errorf("database_url is empty")
+	}
+	return store.OpenReadOnly(ctx, cfg.DatabaseURL, wait)
+}
+
 // Bus connects to NATS and makes sure the streams and buckets exist.
 func Bus(ctx context.Context, cfg *config.Config, name string) (*bus.Conn, error) {
 	c, err := bus.Connect(cfg.NATSURL, name)

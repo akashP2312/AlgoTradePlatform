@@ -3,9 +3,10 @@
 // subject and flushed every gateway.flush (250 ms). It seeds its last-value
 // cache from the KV buckets so a panel paints at once, serves the built web app
 // at / when present, and binds to loopback or a Tailscale address only. It only
-// reads from the bus.
+// reads: from the bus, and from Postgres over a read-only pool.
 //
 //	/ws        the tab socket
+//	/api/*     contract terms, bars, straddle history (see gateway.API)
 //	/          web/dist, when built
 //	/metrics   Prometheus
 //	/healthz   200 while NATS answers
@@ -91,8 +92,25 @@ func main() {
 	counter("pmt_gateway_conflated_total", "Updates replaced by a newer one before a flush.", func() float64 { return float64(hub.Conflated.Load()) })
 	counter("pmt_gateway_dropped_total", "Tabs closed on a write error.", func() float64 { return float64(hub.Dropped.Load()) })
 
+	api := &gateway.API{}
+	go func() {
+		// The API waits for Postgres without holding up the live feed.
+		pool, err := app.DBReadOnly(ctx, cfg, 24*time.Hour)
+		if err != nil {
+			if ctx.Err() == nil {
+				slog.Error("gateway: postgres unavailable; /api answers 503", "err", err)
+			}
+			return
+		}
+		api.SetPool(pool)
+		slog.Info("gateway: api connected to postgres (read-only)")
+		<-ctx.Done()
+		pool.Close()
+	}()
+
 	mux := http.NewServeMux()
 	mux.Handle("GET /ws", hub)
+	api.Register(mux)
 	mux.Handle("GET /metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		if !conn.NC.IsConnected() {

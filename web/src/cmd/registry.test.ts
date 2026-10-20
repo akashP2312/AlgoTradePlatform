@@ -34,3 +34,11 @@ describe("suggest", () => {
     expect(suggest("nifty omon 2026", [])).toEqual([]);
   });
 });
+
+describe("security tokens", () => {
+  it("maps aliases and underscores", () => {
+    expect(parse("gift q").sec).toBe("GIFT NIFTY");
+    expect(parse("gift_nifty q").sec).toBe("GIFT NIFTY");
+    expect(parse("vix gp").sec).toBe("INDIAVIX");
+  });
+});

@@ -13,11 +13,11 @@ export interface Fn {
 
 export const FNS: Fn[] = [
   { code: "SYS", title: "System: feed state, tick ages, service health", sec: "none", built: true },
-  { code: "Q", title: "Quote: bid, ask, last, depth", sec: "required", built: false },
-  { code: "MON", title: "Monitor: a watchlist of quotes", sec: "optional", built: false },
-  { code: "GP", title: "Graph price: intraday chart", sec: "required", built: false },
-  { code: "OMON", title: "Option monitor: chain with IV and greeks", sec: "required", built: false },
-  { code: "STRD", title: "Straddle: ATM straddle, breakevens, implied move", sec: "required", built: false },
+  { code: "Q", title: "Quote: bid, ask, last, depth · NIFTY Q, NIFTY Q FUT, NIFTY Q 25000CE X2", sec: "required", built: true },
+  { code: "MON", title: "Monitor: indices, basis, VIX, GIFT, FX, crude, heavyweights · MON, MON TCS INFY", sec: "none", built: true },
+  { code: "GP", title: "Graph price: 1m candles, volume, OI, ±1d σ bands (GP 3D for 3 sessions)", sec: "required", built: true },
+  { code: "OMON", title: "Option monitor: chain with IV, greeks, OI and ΔOI (OMON X2 for the next expiry)", sec: "required", built: true },
+  { code: "STRD", title: "Straddle: ATM straddle through the day vs prior sessions, breakevens, implied move (STRD 25000 3D)", sec: "required", built: true },
   { code: "W", title: "Workspaces: W, W <name>, W SAVE <name>, W DEL <name>", sec: "none", built: true },
   { code: "HELP", title: "Keys and functions", sec: "none", built: true },
 ];
@@ -29,11 +29,15 @@ export function fn(code: string): Fn | undefined {
 }
 
 // Short forms for the configured underlyings; anything else is taken as typed.
-const ALIASES: Record<string, string> = { NF: "NIFTY", BNF: "BANKNIFTY", FIN: "FINNIFTY" };
+const ALIASES: Record<string, string> = {
+  NF: "NIFTY", BNF: "BANKNIFTY", FIN: "FINNIFTY", VIX: "INDIAVIX", GIFT: "GIFT NIFTY", CRUDE: "CRUDEOIL",
+};
 
+/** A typed security token: an alias, or the name with _ standing for a space
+ * (GIFT_NIFTY), since tokens are split on whitespace. */
 export function security(s: string): string {
   const u = s.toUpperCase();
-  return ALIASES[u] ?? u;
+  return ALIASES[u] ?? u.replaceAll("_", " ");
 }
 
 export interface Parsed {
