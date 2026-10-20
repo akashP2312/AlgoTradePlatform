@@ -76,6 +76,18 @@ def test_spread_filter_drops_wide_quotes():
     assert row["c"]["mid"] is None and row["c"]["iv"] is None and row["c"]["spr"] > 0.3
 
 
+def test_stale_quotes_leave_the_fit():
+    eng = build()
+    d = EXPIRIES[1]
+    # A wing strike left at a stale, mispriced quote, as when the ticker's window moves.
+    eng.book.update(tick(f"NFO|NIFTY|{d.isoformat()}|27500|CE", 30.0, 30.5, recv=clock.ms(NOW) - 600_000))
+    pl = eng.expiry("NIFTY", d, NOW).payload
+    row = next(r for r in pl["rows"] if r["k"] == 27500.0)
+    assert row["c"]["b"] == 30.0 and row["c"]["mid"] is None and row["c"]["iv"] is None
+    assert row["c"]["age"] == 600_000
+    assert pl["fit"]["ok"], pl["fit"]
+
+
 def test_expired_and_missing():
     eng = build()
     assert eng.expiry("NIFTY", date(2026, 10, 1), NOW) is None

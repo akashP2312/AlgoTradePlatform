@@ -83,17 +83,17 @@ func main() {
 // ---- market ----
 
 type inst struct {
-	token          uint32
-	exch, seg      string // exchange and Kite segment column
-	symbol, name   string
-	itype          string // EQ, FUT, CE, PE
-	expiry         time.Time
-	strike         float64
-	tick           float64
-	lot            int
-	under          string // the walk this instrument is priced from
-	index          bool
-	basis, scaleTo float64 // future basis in points; EQ price relative to the walk
+	token        uint32
+	exch, seg    string // exchange and Kite segment column
+	symbol, name string
+	itype        string // EQ, FUT, CE, PE
+	expiry       time.Time
+	strike       float64
+	tick         float64
+	lot          int
+	under        string // the walk this instrument is priced from
+	index        bool
+	scaleTo      float64 // EQ price relative to the walk
 }
 
 type market struct {
@@ -143,9 +143,9 @@ func newMarket(today time.Time, vol float64, cal *calendar.Calendar, rules []cal
 		if s.name == "NIFTY" {
 			month = months[0]
 		}
-		for i, d := range months {
+		for _, d := range months {
 			add(&inst{exch: s.deriv, seg: "NFO-FUT", symbol: fmt.Sprintf("%s%sFUT", s.name, strings.ToUpper(d.Format("06Jan"))),
-				name: s.name, itype: "FUT", expiry: d, tick: 0.1, lot: s.lot, under: s.name, basis: float64(i+1) * s.spot * 0.004}, kite.SegNseFO)
+				name: s.name, itype: "FUT", expiry: d, tick: 0.1, lot: s.lot, under: s.name}, kite.SegNseFO)
 		}
 		atm := math.Round(s.spot/s.step) * s.step
 		for _, d := range exps {
@@ -219,25 +219,52 @@ func (m *market) walk() {
 
 // price is the instrument's last price at spot s.
 func (in *inst) price(s float64, now time.Time, vol float64) float64 {
+	t := math.Max(in.expiry.Add(15*time.Hour+30*time.Minute).Sub(now).Hours()/24/365, 1.0/365/24)
+	f := s * math.Exp(rate*t)
 	switch in.itype {
 	case "FUT":
-		return round(s+in.basis, in.tick)
+		return round(f, in.tick)
 	case "CE", "PE":
-		t := math.Max(in.expiry.Add(15*time.Hour+30*time.Minute).Sub(now).Hours()/24/365, 1.0/365/24)
-		return round(math.Max(bs(in.itype == "CE", s, in.strike, t, vol), 0.05), in.tick)
+		v := smileVol(math.Log(in.strike/f), t, vol)
+		return round(math.Max(math.Exp(-rate*t)*black76(in.itype == "CE", f, in.strike, t, v), 0.05), in.tick)
 	}
 	return round(s*in.scaleTo, in.tick)
 }
 
-func bs(call bool, s, k, t, v float64) float64 {
+// The smile is SSVI (Gatheral and Jacquier) around the walk's vol at the money, so
+// the IV engine fits a skewed, butterfly-free surface instead of a flat one. These
+// give a 25-delta risk reversal near -0.67*rho*eta*vol (about -3 vol points at 18%)
+// at every expiry; plausible for NIFTY, not calibrated (verify). eta*(1+|rho|) <= 2
+// keeps the surface free of static arbitrage.
+const (
+	smileRho   = -0.4
+	smileEta   = 0.6
+	smileGamma = 0.5
+)
+
+// smileVol is the implied vol at log-moneyness k for t years, given the ATM vol.
+func smileVol(k, t, atm float64) float64 {
+	th := atm * atm * t
+	phi := smileEta / (math.Pow(th, smileGamma) * math.Pow(1+th, 1-smileGamma))
+	x := phi*k + smileRho
+	w := th / 2 * (1 + smileRho*phi*k + math.Sqrt(x*x+1-smileRho*smileRho))
+	return math.Sqrt(w / t)
+}
+
+// rate carries futures to the forward and discounts options, so put-call parity,
+// the futures and the IV engine (whose default rate this is) agree on the forward.
+const rate = 0.065
+
+// black76 is the undiscounted option price on forward f.
+func black76(call bool, f, k, t, v float64) float64 {
 	sd := v * math.Sqrt(t)
-	d1 := (math.Log(s/k) + sd*sd/2) / sd
+	d1 := (math.Log(f/k) + sd*sd/2) / sd
 	d2 := d1 - sd
 	n := func(x float64) float64 { return 0.5 * math.Erfc(-x/math.Sqrt2) }
 	if call {
-		return s*n(d1) - k*n(d2)
+		return f*n(d1) - k*n(d2)
 	}
-	return k*n(-d2) - s*n(-d1)
+	return k*n(-d2) - f*n(-d1)
 }
 
 func round(v, tick float64) float64 {

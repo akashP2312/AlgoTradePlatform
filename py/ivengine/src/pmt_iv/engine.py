@@ -142,6 +142,9 @@ class Params:
     max_spread: float = 0.30
     forward_strikes: int = 5
     vix_roll_days: int = 3
+    # Quotes older than this leave the forward and the smile: a strike the ticker no
+    # longer streams (its window moved, or the feed restarted) keeps its last quote.
+    max_age_ms: int = 300_000
 
 
 @dataclass
@@ -179,10 +182,13 @@ class Engine:
         strikes = sorted(set(ch.calls) | set(ch.puts))
         mids: dict[float, tuple] = {}
         pairs = []
+        def fresh(q: Quote | None) -> bool:
+            return q is not None and not (self.p.max_age_ms and q.recv and nowms - q.recv > self.p.max_age_ms)
+
         for k in strikes:
             c, p = ch.calls.get(k), ch.puts.get(k)
-            cm, cs = c.mid(self.p.max_spread) if c else (None, None)
-            pm, ps = p.mid(self.p.max_spread) if p else (None, None)
+            cm, cs = c.mid(self.p.max_spread) if fresh(c) else (None, None)
+            pm, ps = p.mid(self.p.max_spread) if fresh(p) else (None, None)
             mids[k] = (cm, cs, pm, ps)
             if cm is not None and pm is not None:
                 pairs.append((k, cm, pm))

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"math"
 	"net/http/httptest"
 	"slices"
 	"strings"
@@ -150,6 +151,33 @@ func TestHolidayExpiries(t *testing.T) {
 		slices.Sort(got[k])
 		if !slices.Equal(got[k], want) {
 			t.Errorf("%s: %v, want %v", k, got[k], want)
+		}
+	}
+}
+
+// TestSmileArbFree checks the smile's call prices fall and stay convex across
+// strikes at every tenor fakekite lists, puts below the money carry more vol than
+// calls above it, and the ATM vol is the walk's.
+func TestSmileArbFree(t *testing.T) {
+	const s, atm = 25000.0, 0.18
+	for _, days := range []float64{0.05, 1, 5, 12, 33, 90} {
+		tt := days / 365
+		if v := smileVol(0, tt, atm); math.Abs(v-atm) > 0.01 {
+			t.Errorf("%gd: ATM vol %.4f, want near %.2f", days, v, atm)
+		}
+		if lo, hi := smileVol(-0.03, tt, atm), smileVol(0.03, tt, atm); lo <= hi {
+			t.Errorf("%gd: no put skew: %.4f at -3%%, %.4f at +3%%", days, lo, hi)
+		}
+		var prev []float64
+		for k := 15000.0; k <= 35000; k += 50 {
+			c := black76(true, s, k, tt, smileVol(math.Log(k/s), tt, atm))
+			prev = append(prev, c)
+			if n := len(prev); n >= 3 {
+				a, b, d := prev[n-3], prev[n-2], prev[n-1]
+				if d > b+1e-9 || a-2*b+d < -1e-6 {
+					t.Fatalf("%gd: calls not decreasing and convex at %g: %.6f %.6f %.6f", days, k, a, b, d)
+				}
+			}
 		}
 	}
 }
