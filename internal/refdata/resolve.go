@@ -56,6 +56,37 @@ func Expiries(insts []Inst, exch, name string, today time.Time) []time.Time {
 	return out
 }
 
+// WithMonthlies keeps the nearest wide expiries plus the nearest n monthlies (the
+// last listed expiry of each calendar month), which the IV engine's 30-day VIX
+// needs past the weeklies: the expiries the ticker streams. all is sorted ascending; so is the result.
+func WithMonthlies(all []time.Time, wide, n int) []time.Time {
+	out := all
+	if len(out) > wide {
+		out = append([]time.Time(nil), all[:wide]...)
+	}
+	if n <= 0 || len(out) == len(all) {
+		return out
+	}
+	have := make(map[time.Time]bool, len(out))
+	for _, e := range out {
+		have[e] = true
+	}
+	for i, e := range all {
+		if n == 0 {
+			break
+		}
+		last := i == len(all)-1 || all[i+1].Month() != e.Month() || all[i+1].Year() != e.Year()
+		if !last {
+			continue
+		}
+		n--
+		if !have[e] {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // Strikes lists the distinct strikes of rows, ascending.
 func Strikes(rows []Inst) []float64 {
 	seen := map[float64]bool{}

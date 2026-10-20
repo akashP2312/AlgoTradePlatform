@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"pmt/internal/clock"
+	"pmt/internal/config"
 	"pmt/internal/store"
 )
 
@@ -270,3 +272,32 @@ func TestAPIOI0(t *testing.T) {
 }
 
 func jsonNum(k float64) string { b, _ := json.Marshal(k); return string(b) }
+
+func TestMarkLive(t *testing.T) {
+	ch := func(xs ...string) []refChain {
+		out := make([]refChain, len(xs))
+		for i, x := range xs {
+			out[i] = refChain{Exp: x}
+		}
+		return out
+	}
+	chains := map[string][]refChain{
+		// Yesterday's expiry is still listed; 12-01 is a weekly past wide_expiries.
+		"NIFTY":  ch("2026-10-19", "2026-10-27", "2026-11-03", "2026-11-23", "2026-12-01", "2026-12-29", "2027-03-30"),
+		"SENSEX": ch("2026-10-22"),
+	}
+	univ := []config.Underlying{{Name: "NIFTY", WideExpiries: 2, Monthlies: 3}}
+	markLive(chains, univ, time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC))
+	var got []string
+	for _, c := range chains["NIFTY"] {
+		if c.Live {
+			got = append(got, c.Exp)
+		}
+	}
+	if want := "[2026-10-27 2026-11-03 2026-11-23 2026-12-29]"; fmt.Sprint(got) != want {
+		t.Errorf("live NIFTY chains %v, want %s", got, want)
+	}
+	if chains["SENSEX"][0].Live {
+		t.Errorf("an underlying the ticker does not stream is marked live")
+	}
+}

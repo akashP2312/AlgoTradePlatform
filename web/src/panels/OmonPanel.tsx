@@ -73,7 +73,7 @@ export function OmonPanel({ sec, args, setArgs }: { sec?: string; args?: string[
   let err = "";
   for (const a of args ?? []) {
     const e = r ? expiryArg(und, a, r) : null;
-    if (e) x = e;
+    if (e) x = xs.includes(e) ? e : x; // an unstreamed expiry (a stale saved arg) falls back to the nearest
     else err = `don't understand "${a}": give an expiry, e.g. X2 or 2026-10-27`;
   }
   const chain = r?.chains[und]?.find((c) => c.x === x);

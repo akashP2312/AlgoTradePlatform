@@ -72,7 +72,7 @@ export function StrdPanel({ sec, args, setArgs }: { sec?: string; args?: string[
     const d = /^(\d+)D$/i.exec(a);
     const e = r ? expiryArg(und, a, r) : null;
     if (d) nDays = Math.min(10, Math.max(1, Number(d[1])));
-    else if (e) x = e;
+    else if (e) x = xs.includes(e) ? e : x; // an unstreamed expiry (a stale saved arg) falls back to the nearest
     else if (/^\d+(\.\d+)?$/.test(a)) kArg = Number(a);
     else err = `don't understand "${a}": give an expiry (X2), a strike (25000) or sessions (3D)`;
   }

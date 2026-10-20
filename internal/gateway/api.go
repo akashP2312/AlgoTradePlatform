@@ -4,7 +4,7 @@ package gateway
 // contract terms, minute bars and straddle history. Every route is a GET over a
 // read-only pool; nothing here writes, and nothing takes an order.
 //
-//	/api/ref                    lot and tick sizes, option expiries
+//	/api/ref                    lot and tick sizes, option expiries (live: streamed)
 //	/api/bars?c=<contract>&days=N
 //	/api/straddle?und=NIFTY&x=2026-10-27&days=5[&k=25000]
 //	/api/oi0?und=NIFTY&x=2026-10-27   each strike's OI at the previous close
@@ -24,13 +24,17 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"pmt/internal/clock"
+	"pmt/internal/config"
 	"pmt/internal/contract"
+	"pmt/internal/refdata"
 )
 
 // API serves /api/*. Its pool is set once Postgres answers; until then every route
 // returns 503 and the screens fall back to what the bus gives them.
 type API struct {
 	pool atomic.Pointer[pgxpool.Pool]
+	// Universe says which expiries the ticker streams, so /api/ref can mark them.
+	Universe []config.Underlying
 }
 
 func (a *API) SetPool(p *pgxpool.Pool) { a.pool.Store(p) }
@@ -115,6 +119,7 @@ type refChain struct {
 	Lot     int     `json:"lot"`
 	Tick    float64 `json:"tick"`
 	Strikes int     `json:"n"`
+	Live    bool    `json:"live,omitempty"` // the ticker streams it, so it has ticks and an IV surface
 }
 
 func (a *API) ref(w http.ResponseWriter, r *http.Request) {
@@ -153,8 +158,34 @@ func (a *API) ref(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{"insts": insts, "chains": chains, "today": clock.Today().Format(time.DateOnly)}, nil
+		today := clock.Today()
+		markLive(chains, a.Universe, today)
+		return map[string]any{"insts": insts, "chains": chains, "today": today.Format(time.DateOnly)}, nil
 	}, func() error { return nil })
+}
+
+// markLive flags the chains the ticker streams: per configured underlying, the
+// nearest wide_expiries from today plus its monthlies, as the ticker picks them.
+// Each underlying's chains are sorted by expiry.
+func markLive(chains map[string][]refChain, univ []config.Underlying, today time.Time) {
+	t := today.Format(time.DateOnly)
+	for _, ul := range univ {
+		cs := chains[ul.Name]
+		var all []time.Time
+		for _, c := range cs {
+			if c.Exp >= t {
+				x, _ := time.Parse(time.DateOnly, c.Exp)
+				all = append(all, x)
+			}
+		}
+		live := map[string]bool{}
+		for _, x := range refdata.WithMonthlies(all, ul.WideExpiries, ul.Monthlies) {
+			live[x.Format(time.DateOnly)] = true
+		}
+		for i := range cs {
+			cs[i].Live = live[cs[i].Exp]
+		}
+	}
 }
 
 func day(t *time.Time) string {

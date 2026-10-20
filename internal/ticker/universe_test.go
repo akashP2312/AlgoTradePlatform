@@ -106,21 +106,3 @@ func TestAssignSticky(t *testing.T) {
 		t.Fatalf("new token should fill the freed slot")
 	}
 }
-
-func TestWithMonthlies(t *testing.T) {
-	d := func(s string) time.Time { x, _ := time.Parse("2006-01-02", s); return x }
-	all := []time.Time{d("2026-10-20"), d("2026-10-27"), d("2026-11-03"), d("2026-11-10"), d("2026-11-17"), d("2026-11-24"), d("2026-12-29"), d("2027-03-30")}
-	got := withMonthlies(all, 4, 3)
-	want := []time.Time{d("2026-10-20"), d("2026-10-27"), d("2026-11-03"), d("2026-11-10"), d("2026-11-24"), d("2026-12-29")}
-	if len(got) != len(want) {
-		t.Fatalf("got %v want %v", got, want)
-	}
-	for i := range want {
-		if !got[i].Equal(want[i]) {
-			t.Fatalf("got %v want %v", got, want)
-		}
-	}
-	if g := withMonthlies(all, 4, 0); len(g) != 4 {
-		t.Fatalf("no monthlies: got %v", g)
-	}
-}

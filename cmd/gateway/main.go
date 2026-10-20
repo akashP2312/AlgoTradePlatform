@@ -92,7 +92,7 @@ func main() {
 	counter("pmt_gateway_conflated_total", "Updates replaced by a newer one before a flush.", func() float64 { return float64(hub.Conflated.Load()) })
 	counter("pmt_gateway_dropped_total", "Tabs closed on a write error.", func() float64 { return float64(hub.Dropped.Load()) })
 
-	api := &gateway.API{}
+	api := &gateway.API{Universe: cfg.Universe.Underlyings}
 	go func() {
 		// The API waits for Postgres without holding up the live feed.
 		pool, err := app.DBReadOnly(ctx, cfg, 24*time.Hour)

@@ -21,6 +21,8 @@ export interface Chain {
   lot: number;
   tick: number;
   n: number;
+  /** The ticker streams it: it has ticks and an IV surface. */
+  live?: boolean;
 }
 
 export interface Ref {
@@ -79,10 +81,15 @@ export function serverToday(): string {
   return ref?.today && ref.today > d ? ref.today : d;
 }
 
-/** The underlying's option expiries from today on. */
+/**
+ * The underlying's option expiries from today on: the streamed ones when the
+ * gateway marks any (only those have ticks and a surface), else all listed.
+ */
 export function expiries(und: string, r: Ref | null = ref): string[] {
   const t = serverToday();
-  return (r?.chains[und] ?? []).map((c) => c.x).filter((x) => x >= t);
+  const cs = (r?.chains[und] ?? []).filter((c) => c.x >= t);
+  const live = cs.filter((c) => c.live);
+  return (live.length ? live : cs).map((c) => c.x);
 }
 
 export function securities(r: Ref | null = ref): string[] {

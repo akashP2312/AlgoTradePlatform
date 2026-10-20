@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decimals, resolve, type Ref } from "./ref";
+import { decimals, expiries, expiryArg, resolve, type Ref } from "./ref";
 
 // Far-future expiries so "from today on" holds whatever the clock says.
 const r: Ref = {
@@ -46,5 +46,17 @@ describe("resolve", () => {
 describe("decimals", () => {
   it("follows the tick", () => {
     expect([0.05, 0.1, 0.0025, 1, 0.5, 0].map(decimals)).toEqual([2, 1, 4, 0, 1, 2]);
+  });
+});
+
+describe("expiries", () => {
+  const ch = (x: string, live?: boolean) => ({ x, lot: 75, tick: 0.05, n: 3, live });
+  it("lists only the streamed chains when the gateway marks any", () => {
+    const lr: Ref = { ...r, chains: { NIFTY: [ch("2099-01-06", true), ch("2099-01-13"), ch("2099-01-29", true)] } };
+    expect(expiries("NIFTY", lr)).toEqual(["2099-01-06", "2099-01-29"]);
+    expect(expiryArg("NIFTY", "X2", lr)).toBe("2099-01-29");
+  });
+  it("lists every chain when none is marked", () => {
+    expect(expiries("NIFTY", r)).toEqual(["2099-01-06", "2099-01-29"]);
   });
 });
