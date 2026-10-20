@@ -124,3 +124,95 @@ Phase 0 is done when all of these hold, recorded here with dates:
 
 | Date | Session | Gaps | Harvest | EOD | Notes |
 |------|---------|------|---------|-----|-------|
+
+## 8. Phase 3 gate
+
+The gate: scenario P&L reconciles with broker P&L on real positions. It runs on a
+live day (the login in section 2) with real F&O positions open in the account; the
+dry-run stack's fakekite cannot pass it. Everything below only reads: KV gets, the
+POS and RISK panels, and SELECTs.
+
+It checks three things, from cheapest to most telling:
+
+1. **Zero shock.** Repricing every leg at the broker's own LTP gives the broker's
+   P&L. The POS panel's check column shows the difference per row and flags
+   anything over ₹1.
+2. **Live M2M.** RISK's M2M (the broker's M2M plus tick moves on fresh legs) sits
+   on the broker's M2M right after each positions pull.
+3. **Prediction.** The spot-vol path row of a captured grid, read at the spot move
+   that then happened, plus theta for the elapsed time, matches the change in the
+   broker's M2M over the same interval.
+
+### On the day
+
+1. After the login and 09:15, open POS and RISK. Confirm every open leg is
+   modelled: no `risk_legs_flagged` alert, `unmod` empty, no flagged rows in POS.
+   A flagged or unmodelled leg puts the book out of scope for the day; note it and
+   stop.
+2. **Zero shock**: at 09:30, 12:00 and 15:00, check that every POS check cell reads
+   0. Note any row that doesn't, with its symbol and the difference.
+3. **Live M2M**: at the same times, compare RISK's M2M with the broker M2M figure
+   (`pnl.bm2m`) within a few seconds of a positions pull. They differ by tick moves
+   since the pull, so on a quiet tape they should agree to within a few hundred
+   rupees.
+4. **Prediction**: capture risk.book every 30 minutes from 09:30 to 15:15:
+
+   ```bash
+   mkdir -p gate3/$(date +%F)
+   scripts/gate3/capture.sh > gate3/$(date +%F)/$(date +%H%M).json
+   ```
+
+   `capture.sh` defaults to the container `pmt-riskengine-1`; check the name with
+   `docker ps` on the VM and pass it as the first argument if it differs.
+   Then compare consecutive captures (and wider pairs, e.g. 09:30 → 15:15):
+
+   ```bash
+   jq -n --slurpfile a gate3/DAY/0930.json --slurpfile b gate3/DAY/1000.json -f scripts/gate3/compare.jq
+   ```
+
+   Read the output fields as follows:
+   - `pred`: the path row at `move_pct` plus `pred_theta`.
+   - `broker`: the change in the broker's M2M.
+   - `err`: `pred` minus `broker`.
+   - `terminal`: the change in RISK's own M2M, for reference.
+   - `same_legs`: must be true. A fill between the captures breaks the comparison.
+   - `flagged`: must be 0.
+   - `broker_age_s`: must be under a minute at both ends, so the broker figure is
+     fresh.
+5. After the close, summarise the day from the minute snapshots:
+
+   ```sql
+   -- docker exec pmt-db-1 psql -U pmt -d pmt
+   SELECT trade_date, count(*) AS mins,
+          min(ts AT TIME ZONE 'Asia/Kolkata')::time AS first,
+          max(ts AT TIME ZONE 'Asia/Kolkata')::time AS last,
+          round(min(m2m)) AS low, round(max(m2m)) AS high,
+          round((array_agg(m2m ORDER BY ts DESC))[1]) AS close_m2m,
+          max(flags) AS max_flags, min(legs) AS min_legs, max(legs) AS max_legs
+   FROM risk_snapshots GROUP BY trade_date ORDER BY trade_date DESC LIMIT 5;
+   ```
+
+   `close_m2m` should match the M2M the broker shows after the close, within the
+   last minute's move. The snapshots don't store the broker's M2M (`bm2m`) or the
+   grid, so the prediction check depends on the captures above; keep them.
+
+### Pass criteria (verify the tolerances after the first day)
+
+An interval counts when `same_legs` is true, `flagged` is 0, both ends are fresh,
+and the spot moved by at least 0.3%. Below that, quote noise and the broker's LTP
+lag swamp the signal. A counted interval passes when |`err`| ≤ max(₹1,000, 10% of
+|`broker`|). The vol path is beta's typical response, not the day's actual vol
+move, so a large miss on a day the smile shifted is a finding to explain, not
+automatically a fail.
+
+Phase 3 is done when all of these hold:
+
+- [ ] 3 sessions with real positions: zero-shock checks all 0, and live M2M in
+      line at every check.
+- [ ] At least 8 counted intervals across those sessions, with at least 80%
+      passing. Every miss is explained in Notes (vol shift, fill, stale leg).
+- [ ] Close M2M from the snapshots matches the broker's closing M2M on each of
+      those days.
+
+| Date | Legs | Zero shock | Live M2M | Intervals (pass/counted) | Close M2M vs broker | Notes |
+|------|------|------------|----------|--------------------------|---------------------|-------|
