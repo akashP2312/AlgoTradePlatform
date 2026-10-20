@@ -36,6 +36,10 @@ type Service struct {
 	Cal    *calendar.Calendar
 	Notify *notify.Notifier
 
+	// FeedGrace is how long after a socket (re)connects an untouched heartbeat still
+	// counts as ok; DefaultGrace when zero.
+	FeedGrace time.Duration
+
 	token  atomic.Value // string
 	apiKey atomic.Value // string
 	sess   atomic.Pointer[calendar.Session]
@@ -49,6 +53,7 @@ type Service struct {
 	assign   map[uint32]int
 	guessed  map[string]bool // underlyings whose window was centred without a spot
 	conns    []*kite.WS
+	upSince  []atomic.Int64 // per conn, ms of its last connect
 	last     map[uint32]bus.Tick
 	dirty    map[uint32]struct{}
 	feed     FeedStatus
@@ -95,11 +100,17 @@ func (s *Service) Run(ctx context.Context) error {
 	spot := s.kvSpot(ctx, lkv)
 
 	n := max(1, s.Cfg.Kite.WSConnections)
+	s.upSince = make([]atomic.Int64, n)
 	for i := range n {
 		w := &kite.WS{
 			Name: fmt.Sprintf("ws%d", i+1), URL: s.Cfg.Kite.WSURL,
 			Token: func() string { return s.token.Load().(string) }, Silence: s.Cfg.Ticker.SilenceReconnect,
 			Max: s.Cfg.Kite.TokensPerConn, OnPacket: s.onPacket, OnText: s.onText,
+		}
+		w.OnState = func(up bool, _ error) {
+			if up {
+				s.upSince[i].Store(bus.Ms(clock.Now()))
+			}
 		}
 		w.APIKey = s.apiKey.Load().(string)
 		s.conns = append(s.conns, w)
@@ -574,7 +585,10 @@ func Cut(u *Universe, last map[uint32]bus.Tick, minute time.Time, source string)
 func (s *Service) feedLoop(ctx context.Context) {
 	tk := time.NewTicker(time.Second)
 	defer tk.Stop()
-	th := Thresholds{Stale: s.Cfg.Ticker.StaleAfter, Halt: s.Cfg.Ticker.HaltAfter}
+	th := Thresholds{Stale: s.Cfg.Ticker.StaleAfter, Halt: s.Cfg.Ticker.HaltAfter, Grace: s.FeedGrace}
+	if th.Grace <= 0 {
+		th.Grace = DefaultGrace
+	}
 	prev := FeedClosed
 	for {
 		select {
@@ -615,6 +629,12 @@ func (s *Service) feedStatus(now time.Time, phase string, th Thresholds) FeedSta
 	for und, idx := range s.uni.Index {
 		fut := nearFut(s.uni, und)
 		b := Beat{Index: s.recvOf(idx), Fut: s.recvOf(fut), SocketUp: s.connUp(idx) && (fut == 0 || s.connUp(fut))}
+		b.UpSince = s.upSinceOf(idx)
+		if fut != 0 {
+			if t := s.upSinceOf(fut); t.After(b.UpSince) {
+				b.UpSince = t
+			}
+		}
 		f := UndFeed{State: Classify(now, phase, b, ex, th), IndexAge: ageMs(now, b.Index), FutAge: ageMs(now, b.Fut), Since: st.At}
 		if old, ok := s.feed.Und[und]; ok && old.State == f.State {
 			f.Since = old.Since
@@ -644,6 +664,18 @@ func (s *Service) recvOf(tok uint32) time.Time {
 	}
 	if t, ok := s.last[tok]; ok {
 		return bus.FromMs(t.Recv)
+	}
+	return time.Time{}
+}
+
+// upSinceOf is when the socket a token is assigned to last connected, zero if unknown.
+func (s *Service) upSinceOf(tok uint32) time.Time {
+	i, ok := s.assign[tok]
+	if !ok || i < 0 || i >= len(s.upSince) {
+		return time.Time{}
+	}
+	if ms := s.upSince[i].Load(); ms != 0 {
+		return bus.FromMs(ms)
 	}
 	return time.Time{}
 }

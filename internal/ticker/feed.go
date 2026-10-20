@@ -24,10 +24,12 @@ func Worse(a, b string) bool { return feedRank[a] > feedRank[b] }
 
 // Beat is what the classifier sees of one underlying: the last receive times (zero
 // when never seen) of its heartbeat instruments, the index and the nearest future,
-// and whether the sockets carrying them are up.
+// whether the sockets carrying them are up, and since when (the later of the two
+// sockets' last connect, zero if unknown).
 type Beat struct {
 	Index, Fut time.Time
 	SocketUp   bool
+	UpSince    time.Time
 }
 
 // Exchange is the last tick on any subscribed derivatives or cash token, and
@@ -41,7 +43,12 @@ type Exchange struct {
 type Thresholds struct {
 	Stale time.Duration // heartbeat silence that marks an underlying stale
 	Halt  time.Duration // exchange-wide silence, sockets up, that marks a halt
+	Grace time.Duration // after a (re)connect, how long an untouched heartbeat counts as ok
 }
+
+// DefaultGrace is the connect grace when none is configured: long enough for the
+// first full-mode ticks of a freshly subscribed socket, short next to halt_after.
+const DefaultGrace = 10 * time.Second
 
 // Classify gives one underlying's feed state.
 //
@@ -50,6 +57,12 @@ type Thresholds struct {
 // exchange sends nothing). verify: that Kite sends no ticks, rather than repeated
 // unchanged ticks, while NSE halts trading; if it repeats ticks, an unchanged index
 // exchange timestamp would be the signal instead.
+//
+// Right after a socket (re)connects nothing has ticked on it yet, which would read as
+// a halt (or stale) until the first ticks land. So while the heartbeat has not ticked
+// since the connect and th.Grace has not run out, the underlying stays ok. The grace
+// ends early as soon as either heartbeat instrument ticks, after which the normal
+// rules apply, so it never delays detecting a halt that starts later.
 func Classify(now time.Time, phase string, b Beat, ex Exchange, th Thresholds) string {
 	switch phase {
 	case "p":
@@ -64,10 +77,22 @@ func Classify(now time.Time, phase string, b Beat, ex Exchange, th Thresholds) s
 	if fresh(now, b.Index, th.Stale) || fresh(now, b.Fut, th.Stale) {
 		return FeedOK
 	}
+	if warming(now, b, th.Grace) {
+		return FeedOK
+	}
 	if ex.AllUp && !fresh(now, ex.Last, th.Halt) {
 		return FeedHalt
 	}
 	return FeedStale
+}
+
+// warming reports whether the heartbeat's socket connected within grace and neither
+// heartbeat instrument has ticked since.
+func warming(now time.Time, b Beat, grace time.Duration) bool {
+	if b.UpSince.IsZero() || !fresh(now, b.UpSince, grace) {
+		return false
+	}
+	return b.Index.Before(b.UpSince) && b.Fut.Before(b.UpSince)
 }
 
 func fresh(now, t time.Time, within time.Duration) bool {

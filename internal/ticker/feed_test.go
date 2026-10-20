@@ -74,3 +74,72 @@ func TestNearFut(t *testing.T) {
 		t.Errorf("FINNIFTY: %d", got)
 	}
 }
+
+// TestConnectGrace walks a restart second by second the way feedLoop does: the
+// socket comes up with nothing received yet (or only old values from before a
+// reconnect), the first ticks land a little later, and no transition worse than ok
+// may be seen on the way. Once ticking, a real halt is still caught on time.
+func TestConnectGrace(t *testing.T) {
+	t0 := time.Date(2026, 10, 21, 9, 30, 0, 0, time.UTC)
+	th := Thresholds{Stale: 5 * time.Second, Halt: 30 * time.Second, Grace: 10 * time.Second}
+
+	for _, c := range []struct {
+		name string
+		old  time.Time // receive time of the last tick before the restart, zero on a cold start
+	}{
+		{"cold start", time.Time{}},
+		{"reconnect after a minute", t0.Add(-time.Minute)},
+	} {
+		up := t0
+		firstTick := t0.Add(2500 * time.Millisecond) // index and every other token tick here
+		haltAt := t0.Add(20 * time.Second)           // and everything goes silent from here
+		var alerts []string
+		prev := FeedOK
+		for now := t0.Add(time.Second); now.Before(t0.Add(70 * time.Second)); now = now.Add(time.Second) {
+			b := Beat{Index: c.old, Fut: c.old, SocketUp: true, UpSince: up}
+			ex := Exchange{Last: c.old, AllUp: true}
+			if !now.Before(firstTick) {
+				last := now.Truncate(time.Second)
+				if last.After(haltAt) {
+					last = haltAt
+				}
+				b.Index, b.Fut, ex.Last = last, last, last
+			}
+			st := Classify(now, "c", b, ex, th)
+			if st != prev && Worse(st, FeedOK) {
+				alerts = append(alerts, now.Sub(t0).String()+" "+st)
+			}
+			prev = st
+		}
+		// stale 5 s after the silence begins, halt 30 s after it: nothing before.
+		want := []string{"26s stale", "51s halt"}
+		if len(alerts) != len(want) || alerts[0] != want[0] || alerts[1] != want[1] {
+			t.Errorf("%s: alerts %v, want %v", c.name, alerts, want)
+		}
+	}
+}
+
+func TestClassifyGrace(t *testing.T) {
+	up := time.Date(2026, 10, 21, 9, 30, 0, 0, time.UTC)
+	th := Thresholds{Stale: 5 * time.Second, Halt: 30 * time.Second, Grace: 10 * time.Second}
+	silent := Exchange{AllUp: true}
+	cases := []struct {
+		name string
+		now  time.Time
+		b    Beat
+		ex   Exchange
+		want string
+	}{
+		{"just connected, nothing yet", up.Add(time.Second), Beat{SocketUp: true, UpSince: up}, silent, FeedOK},
+		{"grace ran out with nothing", up.Add(11 * time.Second), Beat{SocketUp: true, UpSince: up}, silent, FeedHalt},
+		{"ticked after connect, then quiet: grace over", up.Add(9 * time.Second),
+			Beat{Index: up.Add(time.Second), SocketUp: true, UpSince: up}, Exchange{Last: up.Add(time.Second), AllUp: true}, FeedStale},
+		{"down during grace is still down", up.Add(time.Second), Beat{UpSince: up}, silent, FeedDown},
+		{"no connect time known", up.Add(time.Second), Beat{SocketUp: true}, silent, FeedHalt},
+	}
+	for _, c := range cases {
+		if got := Classify(c.now, "c", c.b, c.ex, th); got != c.want {
+			t.Errorf("%s: got %s, want %s", c.name, got, c.want)
+		}
+	}
+}
