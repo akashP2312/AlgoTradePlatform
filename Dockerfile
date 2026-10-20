@@ -11,7 +11,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 sh -c 'for c in ticker recorder jobs login backuprec sys gateway book fakekite; do go build -trimpath -o /out/$c ./cmd/$c || exit 1; done'
+RUN CGO_ENABLED=0 sh -c 'for c in ticker recorder jobs login backuprec sys gateway book riskmon botmon fakekite; do go build -trimpath -o /out/$c ./cmd/$c || exit 1; done'
 
 # pg_dump and pg_restore must match the server's major version (17).
 # Verify the alpine package name when bumping the base image.

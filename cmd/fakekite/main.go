@@ -351,6 +351,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /instruments/historical/{token}/{interval}", s.auth(s.historical))
 	mux.HandleFunc("GET /user/profile", s.auth(s.profile))
 	mux.HandleFunc("GET /portfolio/positions", s.auth(s.positions))
+	mux.HandleFunc("GET /portfolio/holdings", s.auth(s.holdings))
 	mux.HandleFunc("GET /user/margins", s.auth(s.margins))
 	mux.HandleFunc("GET /user/margins/{seg}", s.auth(s.margins))
 	mux.HandleFunc("GET /ws", s.ws)

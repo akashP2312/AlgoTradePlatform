@@ -7,7 +7,7 @@ import pytest
 from pmt_iv import black76, clock
 from pmt_iv.calendar import Calendar
 from pmt_iv.engine import Quote
-from pmt_iv.risk import Beta, Leg, Params, Risk, Surface, legs_from_book
+from pmt_iv.risk import Beta, Leg, Params, Risk, Surface, day_pnl, legs_from_book
 
 NOW = clock.at(date(2026, 10, 19), "11:00")
 WEEK = date(2026, 10, 27)
@@ -263,3 +263,17 @@ def test_output_is_json_clean():
     rows, qs = strangle(r)
     s = json.dumps(setup(r, rows, qs), allow_nan=False)
     assert "NaN" not in s
+
+
+def test_day_pnl_moves_the_broker_figures_to_fresh_ticks():
+    now = clock.ms(NOW)
+    open_ = dict(row("CE", 25400.0, -150), p=100.0, m=1, m2m=-500.0, pnl=1200.0)
+    stale = dict(row("PE", 24600.0, 75), p=50.0, m=1, m2m=300.0, pnl=-100.0)
+    closed = dict(row("CE", 25600.0, 0), p=10.0, m=1, m2m=250.0, pnl=250.0)
+    qs = {open_["c"]: Quote(101.0, 103.0, 102.0, now - 200),   # fresh: short 150 loses 2 each
+          stale["c"]: Quote(55.0, 57.0, 56.0, now - 60_000),   # too old: keep the broker's p
+          closed["c"]: Quote(20.0, 21.0, 20.5, now - 100)}     # closed: realised stands
+    out = day_pnl([open_, stale, closed], qs, now, 5000)
+    assert out["bm2m"] == 50.0 and out["bpnl"] == 1350.0
+    assert out["m2m"] == 50.0 - 300.0 and out["pnl"] == 1350.0 - 300.0
+    assert out["live"] == 1 and out["stale"] == 1

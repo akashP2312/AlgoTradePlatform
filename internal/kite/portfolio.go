@@ -217,3 +217,52 @@ func (r *REST) Margins(ctx context.Context) (Margins, error) {
 	}
 	return Margins{Equity: env.Data.Equity.clean(), Commodity: env.Data.Commodity.clean()}, nil
 }
+
+// Holding is one row of /portfolio/holdings: delivery stock in the demat account.
+// Quantity is settled shares; T1Quantity is bought but not yet settled (verify the
+// field meanings against a real account).
+type Holding struct {
+	TradingSymbol string  `json:"tradingsymbol"`
+	Exchange      string  `json:"exchange"`
+	Token         uint32  `json:"instrument_token"`
+	Quantity      int64   `json:"quantity"`
+	T1Quantity    int64   `json:"t1_quantity"`
+	AveragePrice  float64 `json:"average_price"`
+	LastPrice     float64 `json:"last_price"`
+	ClosePrice    float64 `json:"close_price"`
+	PnL           float64 `json:"pnl"`
+}
+
+// Holdings reads /portfolio/holdings. Read-only.
+func (r *REST) Holdings(ctx context.Context) ([]Holding, error) {
+	body, err := r.get(ctx, "/portfolio/holdings")
+	if err != nil {
+		return nil, err
+	}
+	var env struct {
+		Data []struct {
+			TradingSymbol string `json:"tradingsymbol"`
+			Exchange      string `json:"exchange"`
+			Token         num    `json:"instrument_token"`
+			Quantity      num    `json:"quantity"`
+			T1Quantity    num    `json:"t1_quantity"`
+			AveragePrice  num    `json:"average_price"`
+			LastPrice     num    `json:"last_price"`
+			ClosePrice    num    `json:"close_price"`
+			PnL           num    `json:"pnl"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		return nil, fmt.Errorf("kite: holdings: %w", err)
+	}
+	out := make([]Holding, 0, len(env.Data))
+	for _, h := range env.Data {
+		out = append(out, Holding{
+			TradingSymbol: h.TradingSymbol, Exchange: h.Exchange, Token: uint32(h.Token),
+			Quantity: int64(h.Quantity), T1Quantity: int64(h.T1Quantity),
+			AveragePrice: float64(h.AveragePrice), LastPrice: float64(h.LastPrice),
+			ClosePrice: float64(h.ClosePrice), PnL: float64(h.PnL),
+		})
+	}
+	return out, nil
+}

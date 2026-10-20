@@ -4,10 +4,12 @@
 import type { IDockviewPanelProps } from "dockview-react";
 import { useLinks } from "../cmd/links";
 import { effectiveSec, title, type PanelParams } from "../shell";
+import { BotPanel } from "./BotPanel";
 import { GpPanel } from "./GpPanel";
 import { MonPanel } from "./MonPanel";
 import { OmonPanel } from "./OmonPanel";
 import { PosPanel } from "./PosPanel";
+import { RiskPanel } from "./RiskPanel";
 import { QPanel } from "./QPanel";
 import { StrdPanel } from "./StrdPanel";
 import { SysPanel } from "./SysPanel";
@@ -34,6 +36,8 @@ export function FnPanel({ params, api }: IDockviewPanelProps<PanelParams>) {
       case "OMON": return <OmonPanel sec={sec} args={params.args} setArgs={setArgs} />;
       case "STRD": return <StrdPanel sec={sec} args={params.args} setArgs={setArgs} />;
       case "POS": return <PosPanel />;
+      case "RISK": return <RiskPanel />;
+      case "BOT": return <BotPanel />;
       default: return <Placeholder code={params.fn} sec={sec} />;
     }
   })();

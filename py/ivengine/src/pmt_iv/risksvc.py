@@ -21,7 +21,7 @@ from nats.js.errors import BucketNotFoundError, KeyNotFoundError
 from . import clock, config
 from .calendar import Calendar
 from .engine import Quote
-from .risk import Beta, Leg, Params, Risk, Surface, legs_from_book, quote_from_tick
+from .risk import Beta, Leg, Params, Risk, Surface, day_pnl, legs_from_book, quote_from_tick
 
 log = logging.getLogger("riskengine")
 
@@ -88,6 +88,7 @@ class Service:
         self.beta = Beta.default(self.p)
         self.book: dict | None = None
         self.legs: list[Leg] = []
+        self.rows: list[dict] = []  # every book.net row, closed ones too, for the day's P&L
         self.surfaces: dict[tuple, Surface] = {}
         self.quotes: dict[str, Quote] = {}
         self.leg_subs: dict[str, object] = {}  # tick subject -> subscription
@@ -112,6 +113,7 @@ class Service:
             return
         self.book = b
         self.legs = legs_from_book(b)
+        self.rows = [r for r in b.get("net") or [] if isinstance(r, dict)]
         self.dirty = True
 
     def apply_surface(self, data: bytes) -> None:
@@ -251,6 +253,7 @@ class Service:
             del self.surfaces[k]
         try:
             out = self.risk.book(self.legs, self.surfaces, self.quotes, self.beta, now, self.book.get("ts"))
+            out["pnl"] = day_pnl(self.rows, self.quotes, clock.ms(now), self.p.stale_ms)
         except Exception as e:
             self.note_error(f"book: {e!r}")
             return

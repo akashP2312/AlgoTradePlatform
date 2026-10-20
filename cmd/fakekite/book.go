@@ -189,6 +189,11 @@ func (s *server) positions(w http.ResponseWriter, r *http.Request) {
 	ok(w, map[string]any{"net": net, "day": day})
 }
 
+// holdings is always empty: the fake book is F&O only.
+func (s *server) holdings(w http.ResponseWriter, r *http.Request) {
+	ok(w, []any{})
+}
+
 // Margin figures are a crude stand-in for SPAN: 9% of the notional of every short
 // option and future, 2% exposure on top, and premium paid for long options. They
 // only need to move with the book (verify the field meanings against a real

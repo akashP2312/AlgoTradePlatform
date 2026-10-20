@@ -93,6 +93,22 @@ services:
     command: ["book"]
     depends_on: *deps
 
+  # The day's P&L line, peak and drawdown from risk.book, a snapshot a minute in
+  # risk_snapshots, and the risk alerts against risk.limits. Reads the book only.
+  riskmon:
+    <<: *app
+    command: ["riskmon"]
+    depends_on: *deps
+
+  # Reads the algo-trading bot's ledger; mounted read-only, the bot owns it.
+  botmon:
+    <<: *app
+    command: ["botmon"]
+    volumes:
+      - appdata:/data
+      - ${PMT_BOT_DATA:-../algo-trading/data}:/bot:ro
+    depends_on: *deps
+
   sys:
     <<: *app
     command: ["sys"]

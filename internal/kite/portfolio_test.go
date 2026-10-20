@@ -79,3 +79,21 @@ func TestPositionsTokenError(t *testing.T) {
 		t.Fatalf("err %v, want a token error", err)
 	}
 }
+
+func TestHoldings(t *testing.T) {
+	r := testREST(t, func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/portfolio/holdings" {
+			t.Errorf("path %q", req.URL.Path)
+		}
+		w.Write([]byte(`{"status":"success","data":[
+		 {"tradingsymbol":"INFY","exchange":"NSE","instrument_token":"408065","quantity":10,"t1_quantity":5,
+		  "average_price":1500.5,"last_price":1520,"close_price":null,"pnl":195}]}`))
+	})
+	hs, err := r.Holdings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hs) != 1 || hs[0].TradingSymbol != "INFY" || hs[0].Token != 408065 || hs[0].Quantity != 10 || hs[0].T1Quantity != 5 || hs[0].ClosePrice != 0 {
+		t.Fatalf("holdings %+v", hs)
+	}
+}

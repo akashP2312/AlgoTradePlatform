@@ -6,9 +6,9 @@ import (
 )
 
 // Prefixes a browser may subscribe to. book.* is the broker's positions and margins,
-// risk.* the riskengine's view of them, both read-only. Orders, alerts and the session bucket are not exposed, and nothing a
+// risk.* the riskengine's view of them, bot.* botmon's read of the bots' ledgers, all read-only. Orders, alerts and the session bucket are not exposed, and nothing a
 // browser sends is ever published to the bus.
-var allowed = []string{"tick.", "analytics.", "sys.", "book.", "risk."}
+var allowed = []string{"tick.", "analytics.", "sys.", "book.", "risk.", "bot."}
 
 // checkSubject validates a subscription: an allowed prefix, no empty tokens,
 // '*' only as a whole token and '>' only as the last one.
@@ -23,7 +23,7 @@ func checkSubject(s string) error {
 		}
 	}
 	if !ok {
-		return fmt.Errorf("%q: subscribe to tick.*, analytics.*, sys.*, book.* or risk.* only", s)
+		return fmt.Errorf("%q: subscribe to tick.*, analytics.*, sys.*, book.*, risk.* or bot.* only", s)
 	}
 	toks := strings.Split(s, ".")
 	for i, t := range toks {

@@ -161,6 +161,36 @@ def quote_from_tick(t: dict) -> Quote:
     return Quote(float(t.get("b") or 0), float(t.get("a") or 0), float(t.get("p") or 0), int(t.get("r") or 0))
 
 
+def day_pnl(rows: list[dict], quotes: dict[str, Quote], now_ms: int, stale_ms: int) -> dict:
+    """The book's P&L at live prices: the broker's figures (book.positions, polled every
+    few seconds) moved to each open leg's own tick when that is fresh, so the loss-limit
+    check runs at tick speed. Closed rows keep their realised P&L.
+
+      pnl = sv - bv + q ltp m                  (since the position was opened)
+      m2m = dsv - dbv + (q ltp - oq cl) m      (today, against yesterday's close)
+
+    so moving ltp from the broker's p to the tick's moves both by q (ltp - p) m."""
+    m2m = pnl = bm2m = bpnl = 0.0
+    live = stale = 0
+    for r in rows:
+        bm, bp = float(r.get("m2m") or 0), float(r.get("pnl") or 0)
+        bm2m += bm
+        bpnl += bp
+        q = int(r.get("q") or 0)
+        adj = 0.0
+        if q:
+            qt = quotes.get(r.get("c") or "")
+            if qt is not None and qt.ltp > 0 and 0 <= now_ms - qt.recv <= stale_ms:
+                adj = q * (qt.ltp - float(r.get("p") or 0)) * float(r.get("m") or 1)
+                live += 1
+            else:
+                stale += 1
+        m2m += bm + adj
+        pnl += bp + adj
+    return {"m2m": _r(m2m, 2), "pnl": _r(pnl, 2), "bm2m": _r(bm2m, 2), "bpnl": _r(bpnl, 2),
+            "live": live, "stale": stale}
+
+
 @dataclass
 class Surface:
     """One expiry's smile as the ivengine published it."""
