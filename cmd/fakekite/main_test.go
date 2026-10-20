@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"pmt/internal/calendar"
 	"pmt/internal/clock"
 	"pmt/internal/config"
 	"pmt/internal/kite"
@@ -18,7 +20,7 @@ import (
 // TestAgainstClient drives fakekite with the real REST client and ticker
 // socket, so a change to either side's wire format fails here first.
 func TestAgainstClient(t *testing.T) {
-	m := newMarket(clock.Today(), 0.18)
+	m := testMarket(t, clock.Today())
 	s := &server{m: m, apiKey: "k", token: "tok"}
 	hs := httptest.NewServer(s.routes())
 	defer hs.Close()
@@ -99,5 +101,55 @@ func TestAgainstClient(t *testing.T) {
 			t.Fatal("no full packet from the socket")
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func testMarket(t *testing.T, today time.Time) *market {
+	t.Helper()
+	cal, err := calendar.Load("../../config/calendar/holidays.csv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules, err := calendar.LoadRules("../../config/expiry_rules.csv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return newMarket(today, 0.18, cal, rules)
+}
+
+// TestHolidayExpiries: expiries on a holiday move to the trading day before
+// (2026-11-10 to 11-09, the 11-24 monthly to 11-23), and the dump never lists a
+// holiday as an expiry.
+func TestHolidayExpiries(t *testing.T) {
+	day := func(s string) time.Time {
+		d, _ := time.ParseInLocation(time.DateOnly, s, clock.IST)
+		return d
+	}
+	m := testMarket(t, day("2026-10-19"))
+	got := map[string][]string{}
+	for _, in := range m.insts {
+		if in.expiry.IsZero() {
+			continue
+		}
+		if !m.cal.IsTradingDay(in.expiry) {
+			t.Errorf("%s expires on %s, not a trading day", in.symbol, in.expiry.Format(time.DateOnly))
+		}
+		k := in.name + " " + in.itype
+		if d := in.expiry.Format(time.DateOnly); !slices.Contains(got[k], d) {
+			got[k] = append(got[k], d)
+		}
+	}
+	for k, want := range map[string][]string{
+		// 10-20 (Dussehra) moves to 10-19, which is today, so it is still listed;
+		// 10-27 is the monthly, so the four weeklies run to 11-17.
+		"NIFTY CE":     {"2026-10-19", "2026-10-27", "2026-11-03", "2026-11-09", "2026-11-17", "2026-11-23", "2026-12-29"},
+		"NIFTY FUT":    {"2026-10-27", "2026-11-23", "2026-12-29"},
+		"BANKNIFTY PE": {"2026-10-27", "2026-11-23", "2026-12-29"},
+		"USDINR FUT":   {"2026-10-27"},
+	} {
+		slices.Sort(got[k])
+		if !slices.Equal(got[k], want) {
+			t.Errorf("%s: %v, want %v", k, got[k], want)
+		}
 	}
 }

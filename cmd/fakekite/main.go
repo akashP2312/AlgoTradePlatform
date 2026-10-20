@@ -25,7 +25,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"os"
-	"sort"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -35,7 +35,9 @@ import (
 
 	"pmt/internal/app"
 	"pmt/internal/bus"
+	"pmt/internal/calendar"
 	"pmt/internal/clock"
+	"pmt/internal/config"
 	"pmt/internal/kite"
 )
 
@@ -45,6 +47,9 @@ func main() {
 	token := flag.String("access-token", "fake-access-token", "access token handed out by /session/token and required afterwards")
 	orderEvery := flag.Duration("order-every", 0, "send a fake order update on each socket this often (0 = never)")
 	vol := flag.Float64("vol", 0.18, "annualised volatility of the random walk")
+	cfgDir := filepath.Dir(config.Path())
+	calPath := flag.String("calendar", filepath.Join(cfgDir, "calendar", "holidays.csv"), "holiday calendar: no candles on holidays, expiries shift off them")
+	rulesPath := flag.String("rules", filepath.Join(cfgDir, "expiry_rules.csv"), "expiry rules the listed expiries are projected from")
 	flag.Parse()
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
@@ -52,7 +57,20 @@ func main() {
 		slog.Error("fakekite: refusing to listen", "addr", *listen, "err", err)
 		os.Exit(1)
 	}
-	m := newMarket(clock.Today(), *vol)
+	cal, err := calendar.Load(*calPath)
+	if err != nil {
+		slog.Error("fakekite: calendar", "err", err)
+		os.Exit(1)
+	}
+	rules, err := calendar.LoadRules(*rulesPath)
+	if err != nil {
+		slog.Error("fakekite: expiry rules", "err", err)
+		os.Exit(1)
+	}
+	if !cal.Covers(clock.Today()) {
+		slog.Warn("fakekite: calendar does not cover today; holidays are not skipped", "today", clock.Today().Format(time.DateOnly))
+	}
+	m := newMarket(clock.Today(), *vol, cal, rules)
 	go m.walk()
 	s := &server{m: m, apiKey: *apiKey, token: *token, orderEvery: *orderEvery}
 	slog.Info("fakekite: serving", "addr", *listen, "instruments", len(m.insts), "clock_offset", clock.Offset().String())
@@ -80,6 +98,7 @@ type inst struct {
 
 type market struct {
 	mu     sync.RWMutex
+	cal    *calendar.Calendar
 	spot   map[string]float64
 	open   map[string]float64
 	vol    float64
@@ -96,8 +115,8 @@ type seed struct {
 	weeklies, strikes  int
 }
 
-// Lot sizes and expiry weekdays are plausible, not authoritative (verify before
-// using fakekite output as a reference for anything).
+// Lot sizes are plausible, not authoritative (verify before using fakekite output
+// as a reference for anything). Expiries come from the expiry rules and calendar.
 var seeds = []seed{
 	{name: "NIFTY", index: "NIFTY 50", deriv: "NFO", spot: 25000, step: 50, lot: 75, weeklies: 4, strikes: 60},
 	{name: "BANKNIFTY", index: "NIFTY BANK", deriv: "NFO", spot: 56000, step: 100, lot: 35, weeklies: 0, strikes: 50},
@@ -105,8 +124,8 @@ var seeds = []seed{
 
 var equities = map[string]float64{"RELIANCE": 1400, "HDFCBANK": 1950, "ICICIBANK": 1420, "INFY": 1500, "TCS": 3100}
 
-func newMarket(today time.Time, vol float64) *market {
-	m := &market{spot: map[string]float64{}, open: map[string]float64{}, vol: vol,
+func newMarket(today time.Time, vol float64, cal *calendar.Calendar, rules []calendar.Rule) *market {
+	m := &market{cal: cal, spot: map[string]float64{}, open: map[string]float64{}, vol: vol,
 		byTok: map[uint32]*inst{}, byKey: map[string]*inst{}, volume: map[uint32]uint32{}}
 	next := uint32(1)
 	add := func(in *inst, seg uint32) {
@@ -116,18 +135,15 @@ func newMarket(today time.Time, vol float64) *market {
 		m.byTok[in.token] = in
 		m.byKey[in.exch+":"+in.symbol] = in
 	}
+	var month time.Time // the near NIFTY monthly, which the other futures share
 	for _, s := range seeds {
 		m.spot[s.name], m.open[s.name] = s.spot, s.spot
 		add(&inst{exch: "NSE", seg: "INDICES", symbol: s.index, name: s.index, itype: "EQ", tick: 0, under: s.name, index: true, scaleTo: 1}, kite.SegIndices)
-		var exps []time.Time
-		for _, d := range weekly(today, s.weeklies) {
-			exps = append(exps, d)
+		exps, months := expiries(cal, rules, s.name, today, s.weeklies, 3)
+		if s.name == "NIFTY" {
+			month = months[0]
 		}
-		for _, d := range monthly(today, 3) {
-			exps = append(exps, d)
-		}
-		exps = uniq(exps)
-		for i, d := range monthly(today, 3) {
+		for i, d := range months {
 			add(&inst{exch: s.deriv, seg: "NFO-FUT", symbol: fmt.Sprintf("%s%sFUT", s.name, strings.ToUpper(d.Format("06Jan"))),
 				name: s.name, itype: "FUT", expiry: d, tick: 0.1, lot: s.lot, under: s.name, basis: float64(i+1) * s.spot * 0.004}, kite.SegNseFO)
 		}
@@ -148,7 +164,6 @@ func newMarket(today time.Time, vol float64) *market {
 		m.spot[name], m.open[name] = px, px
 		add(&inst{exch: "NSE", seg: "NSE", symbol: name, name: name, itype: "EQ", tick: 0.05, lot: 1, under: name, scaleTo: 1}, kite.SegNseCM)
 	}
-	month := monthly(today, 1)[0]
 	extra := []struct {
 		exch, seg, name string
 		px, tick        float64
@@ -167,43 +182,24 @@ func newMarket(today time.Time, vol float64) *market {
 	return m
 }
 
-// weekly returns the next n Tuesdays from today (inclusive).
-func weekly(today time.Time, n int) []time.Time {
-	var out []time.Time
-	for d := today; len(out) < n; d = d.AddDate(0, 0, 1) {
-		if d.Weekday() == time.Tuesday {
-			out = append(out, d)
+// expiries lists und's next weeklies (up to weeklies of them) and next monthlies
+// from today, as the expiry rules project them: a date that falls on a holiday
+// moves to the trading day before, and a weekly on the monthly's date is the
+// monthly. all holds both, in order; months only the monthlies.
+func expiries(cal *calendar.Calendar, rules []calendar.Rule, und string, today time.Time, weeklies, monthlies int) (all, months []time.Time) {
+	nw := 0
+	for _, e := range calendar.Project(cal, rules, und, today, today.AddDate(0, 0, 40*monthlies)) {
+		switch {
+		case e.Cycle == "monthly" && len(months) < monthlies:
+			months = append(months, e.Date)
+		case e.Cycle == "weekly" && nw < weeklies:
+			nw++
+		default:
+			continue
 		}
+		all = append(all, e.Date)
 	}
-	return out
-}
-
-// monthly returns the last Tuesday of this month and the next n-1, skipping one
-// already past.
-func monthly(today time.Time, n int) []time.Time {
-	var out []time.Time
-	for m := 0; len(out) < n; m++ {
-		first := time.Date(today.Year(), today.Month()+time.Month(m), 1, 0, 0, 0, 0, today.Location())
-		d := first.AddDate(0, 1, -1)
-		for d.Weekday() != time.Tuesday {
-			d = d.AddDate(0, 0, -1)
-		}
-		if !d.Before(today) {
-			out = append(out, d)
-		}
-	}
-	return out
-}
-
-func uniq(ds []time.Time) []time.Time {
-	sort.Slice(ds, func(i, j int) bool { return ds[i].Before(ds[j]) })
-	var out []time.Time
-	for _, d := range ds {
-		if len(out) == 0 || !out[len(out)-1].Equal(d) {
-			out = append(out, d)
-		}
-	}
-	return out
+	return all, months
 }
 
 // walk moves every underlying once a second.
@@ -467,7 +463,7 @@ func (s *server) ltp(w http.ResponseWriter, r *http.Request) {
 	ok(w, data)
 }
 
-// historical serves deterministic candles over 09:15-15:30 IST on weekdays, so
+// historical serves deterministic candles over each trading day's session, so
 // the harvester sees the same history on every run.
 func (s *server) historical(w http.ResponseWriter, r *http.Request) {
 	t, err := strconv.ParseUint(r.PathValue("token"), 10, 32)
@@ -506,10 +502,11 @@ func (s *server) historical(w http.ResponseWriter, r *http.Request) {
 	s.m.mu.RUnlock()
 	var rows [][]any
 	for d := clock.Date(from); !d.After(to); d = d.AddDate(0, 0, 1) {
-		if d.Weekday() == time.Saturday || d.Weekday() == time.Sunday {
+		ses := s.m.cal.Session(d)
+		if !ses.Trading() {
 			continue
 		}
-		open, end := d.Add(9*time.Hour+15*time.Minute), d.Add(15*time.Hour+30*time.Minute)
+		open, end := ses.Open, ses.Close
 		if !in.expiry.IsZero() && d.After(in.expiry) {
 			break
 		}

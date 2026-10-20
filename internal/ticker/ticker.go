@@ -40,6 +40,7 @@ type Service struct {
 	apiKey atomic.Value // string
 	sess   atomic.Pointer[calendar.Session]
 	kick   chan struct{} // asks the control loop to rebuild the universe
+	lkv    jetstream.KeyValue
 
 	mu       sync.Mutex
 	insts    []refdata.Inst
@@ -72,6 +73,7 @@ func (s *Service) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	s.lkv = lkv
 	sessions, err := kite.WatchSession(ctx, skv)
 	if err != nil {
 		return err
@@ -203,6 +205,7 @@ func (s *Service) loadInstruments(ctx context.Context, wait bool) error {
 			s.insts, s.instDate = insts, d
 			s.mu.Unlock()
 			slog.Info("ticker: instruments loaded", "rows", len(insts), "dump", d)
+			s.pruneLast(ctx, insts)
 			return nil
 		}
 		if !wait {
@@ -411,6 +414,35 @@ func (s *Service) onText(raw []byte) {
 func OrderMsgID(data []byte) string {
 	h := sha256.Sum256(bytes.TrimSpace(data))
 	return "order-" + hex.EncodeToString(h[:16])
+}
+
+// pruneLast drops last values for contracts no longer listed (expired, or gone from
+// a changed dump), so readers that seed from the bucket do not rebuild chains for
+// them. The bucket is in memory with no TTL; nothing else removes them.
+func (s *Service) pruneLast(ctx context.Context, insts []refdata.Inst) {
+	if s.lkv == nil {
+		return
+	}
+	live := make(map[string]bool, len(insts))
+	for _, in := range insts {
+		live[in.Key.Subject()] = true
+	}
+	keys, err := s.lkv.ListKeys(ctx)
+	if err != nil {
+		if !errors.Is(err, jetstream.ErrNoKeysFound) {
+			slog.Warn("ticker: last-value prune", "err", err)
+		}
+		return
+	}
+	n := 0
+	for k := range keys.Keys() {
+		if !live[k] && s.lkv.Purge(ctx, k) == nil {
+			n++
+		}
+	}
+	if n > 0 {
+		slog.Info("ticker: pruned last values", "keys", n)
+	}
 }
 
 // flushLoop writes changed ticks to the last-value bucket asynchronously; the
