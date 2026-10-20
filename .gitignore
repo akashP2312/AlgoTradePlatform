@@ -1,0 +1,11 @@
+# build output
+/bin/
+/dist/
+# local runtime data, archives, backups and recorder files
+/data/
+*.jsonl.zst
+*.age
+# secrets
+.env
+*.token
+age-key.txt

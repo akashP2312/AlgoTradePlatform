@@ -1,0 +1,7 @@
+Participant wise Open Interest (no. of contracts) in Equity Derivatives as on Oct 16, 2026
+Client Type,Future Index Long,Future Index Short,Future Stock Long,Future Stock Short	,Option Index Call Long,Option Index Put Long,Option Index Call Short,Option Index Put Short,Option Stock Call Long,Option Stock Put Long,Option Stock Call Short,Option Stock Put Short,Total Long Contracts	,Total Short Contracts	
+Client,100,200,300,400,500,600,700,800,900,1000,1100,1200,4000,4400
+DII,1,2,3,4,5,6,7,8,9,10,11,12,40,44
+FII,10,20,30,40,50,60,70,80,90,100,110,120,400,440
+Pro,11,22,33,44,55,66,77,88,99,110,121,132,444,484
+TOTAL,122,244,366,488,610,732,854,976,1098,1220,1342,1464,4884,5368

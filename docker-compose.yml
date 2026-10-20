@@ -1,0 +1,119 @@
+# Personal Market Terminal, Phase 0: recording.
+# Every published port binds 127.0.0.1; reach them over Tailscale with
+# `tailscale serve` or an SSH tunnel, never a public address.
+name: pmt
+
+x-app: &app
+  build: .
+  image: pmt:phase0
+  restart: unless-stopped
+  env_file: .env
+  environment: &appenv
+    PMT_CONTAINER: "1"
+    DATABASE_URL: postgres://pmt:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/pmt?sslmode=disable
+    NATS_URL: nats://nats:4222
+    PMT_DATA_DIR: /data
+    PMT_TOKEN_FILE: /data/kite.token
+    KITE_ROOT_URL: ${KITE_ROOT_URL:-https://api.kite.trade}
+    KITE_WS_URL: ${KITE_WS_URL:-wss://ws.kite.trade}
+    PMT_SYS_LISTEN: 0.0.0.0:8090
+    PMT_CLOCK_OFFSET: ${PMT_CLOCK_OFFSET:-}
+  volumes:
+    - appdata:/data
+  logging:
+    driver: json-file
+    options: {max-size: 20m, max-file: "5"}
+
+services:
+  db:
+    image: timescale/timescaledb:2.30.2-pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pmt
+      POSTGRES_DB: pmt
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      TIMESCALEDB_TELEMETRY: "off"
+    command: ["postgres", "-c", "shared_buffers=1GB", "-c", "max_wal_size=4GB", "-c", "timescaledb.telemetry_level=off"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports: ["127.0.0.1:5433:5432"]     # psql from the host; 5432 is left alone
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pmt -d pmt"]
+      interval: 5s
+      retries: 30
+    shm_size: 512m
+
+  nats:
+    image: nats:2.15.1-alpine
+    restart: unless-stopped
+    command: ["-c", "/etc/nats/nats.conf"]
+    volumes:
+      - ./deploy/nats.conf:/etc/nats/nats.conf:ro
+      - natsdata:/data
+    ports: ["127.0.0.1:4222:4222", "127.0.0.1:8222:8222"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8222/healthz?js-enabled-only=true"]
+      interval: 5s
+      retries: 30
+
+  migrate:
+    <<: *app
+    restart: "no"
+    command: ["jobs", "migrate"]
+    depends_on:
+      db: {condition: service_healthy}
+
+  ticker:
+    <<: *app
+    command: ["ticker"]
+    depends_on: &deps
+      migrate: {condition: service_completed_successfully}
+      nats: {condition: service_healthy}
+
+  recorder:
+    <<: *app
+    command: ["recorder"]
+    depends_on: *deps
+
+  jobs:
+    <<: *app
+    command: ["jobs", "schedule"]
+    depends_on: *deps
+
+  # The backup recorder shares only the token file with the rest: it keeps
+  # recording if NATS, the ticker or the database is down.
+  backuprec:
+    <<: *app
+    command: ["backuprec", "-listen", "0.0.0.0:8091"]
+
+  sys:
+    <<: *app
+    command: ["sys"]
+    ports: ["127.0.0.1:8090:8090"]
+    depends_on: *deps
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    restart: unless-stopped
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=30d", "--web.listen-address=0.0.0.0:9090"]
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - promdata:/prometheus
+    ports: ["127.0.0.1:9090:9090"]
+
+  # The daily human step: docker compose run --rm login
+  login:
+    <<: *app
+    restart: "no"
+    profiles: [tools]
+    command: ["login"]
+    stdin_open: true
+    tty: true
+    depends_on:
+      nats: {condition: service_healthy}
+
+volumes:
+  pgdata:
+  natsdata:
+  appdata:
+  promdata:

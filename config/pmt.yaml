@@ -1,0 +1,105 @@
+# Personal Market Terminal: Phase 0 configuration.
+# ${VAR} references are expanded from the environment. Secrets (Kite API key and
+# secret, Telegram token, backup recipient) are read from the environment only.
+
+nats_url: ${NATS_URL}
+database_url: ${DATABASE_URL}
+data_dir: ${PMT_DATA_DIR}
+
+kite:
+  root_url: ${KITE_ROOT_URL}        # https://api.kite.trade, or fakekite in the dry run
+  ws_url: ${KITE_WS_URL}            # wss://ws.kite.trade
+  ws_connections: 2                 # the bot keeps the third
+  tokens_per_conn: 3000
+  quote_per_sec: 1
+  historical_per_sec: 3
+  other_per_sec: 10
+
+# Underlyings whose option chains are recorded. index is the Kite exchange:tradingsymbol.
+# wide_* sets the ticker window; core_* sets the backup recorder window (must fit in
+# one 500-instrument quote call together with the indices and futures).
+universe:
+  underlyings:
+    - name: NIFTY
+      index: "NSE:NIFTY 50"
+      deriv_exchange: NFO
+      futures: 2
+      wide_expiries: 4
+      wide_strikes: 50
+      core_expiries: 3
+      core_strikes: 20
+      backup: true
+      sweep: true
+      harvest: true
+    - name: BANKNIFTY
+      index: "NSE:NIFTY BANK"
+      deriv_exchange: NFO
+      futures: 2
+      wide_expiries: 3              # monthly only since November 2024
+      wide_strikes: 40
+      core_expiries: 3
+      core_strikes: 20
+      backup: true
+      sweep: true
+      harvest: true
+  # Extra instruments streamed by the ticker, as exchange:tradingsymbol or
+  # exchange:name:FUT:<n> for the nth nearest future of a name.
+  extras:
+    - "NSE:INDIA VIX"
+    - "CDS:USDINR:FUT:1"
+    - "MCX:CRUDEOIL:FUT:1"
+    - "NSEIX:GIFT NIFTY:FUT:1"      # verify that Kite lists GIFT Nifty, and under which name
+  # NSE index constituent CSVs (niftyindices.com format); every Symbol is streamed as EQ.
+  constituents:
+    - config/constituents/nifty50.csv
+    - config/constituents/niftybank.csv
+
+ticker:
+  recentre_steps: 10                # grow the window when spot drifts this many strikes
+  stale_after: 5s                   # index / near future / ATM silence that marks the feed stale
+  silence_reconnect: 10s            # no frames at all for this long forces a reconnect
+  kv_flush: 1s
+
+recorder:
+  batch_rows: 5000
+  flush_every: 1s
+
+sweep:
+  at: "15:25:00"
+  underlyings: [NIFTY, BANKNIFTY]
+
+harvest:
+  lookback_days: 180                # day-one backfill depth
+  window_days: 60                   # Kite allows 60 days of minute candles per call
+
+backup:
+  outbox: ${PMT_DATA_DIR}/backup/outbox
+  recipient_env: PMT_BACKUP_AGE_RECIPIENT
+  keep_local_days: 14
+
+backuprec:
+  out_dir: ${PMT_DATA_DIR}/backuprec
+  poll_second: 20                   # poll at hh:mm:20, apart from the 15:25 sweep
+  token_file: ${PMT_TOKEN_FILE}
+
+loaders:
+  user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+  nse_archive: https://nsearchives.nseindia.com    # verify host before relying on it
+  niftyindices: https://www.niftyindices.com       # verify host before relying on it
+
+sys:
+  listen: ${PMT_SYS_LISTEN}         # 127.0.0.1:8090 or the Tailscale address only
+
+# Daily timetable for `jobs schedule`, IST. trading_day_only skips weekends and holidays.
+schedule:
+  - {at: "06:15", job: instruments, catch_up: true}
+  - {at: "06:20", job: calendar, catch_up: true}
+  - {at: "15:25", job: sweep, trading_day_only: true}
+  - {at: "15:45", job: gaps, trading_day_only: true}
+  - {at: "16:15", job: merge-backup, trading_day_only: true}
+  - {at: "17:30", job: harvest, trading_day_only: true}
+  - {at: "19:00", job: bhav, trading_day_only: true}
+  - {at: "19:05", job: partoi, trading_day_only: true}
+  - {at: "19:10", job: vix, trading_day_only: true}
+  - {at: "19:30", job: gaps, trading_day_only: true}
+  - {at: "01:30", job: backup}

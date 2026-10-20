@@ -1,0 +1,68 @@
+# Dry run: the whole stack against fakekite, with PMT_CLOCK_OFFSET shifting
+# every clock (make dryrun START=09:14:30). It runs as its own compose project
+# with its own volumes, and its ports sit 10000 above the real ones.
+# Nothing here talks to Kite: the key, secret and tokens are fake.
+x-fake: &fake
+  KITE_ROOT_URL: http://fakekite:8099
+  KITE_WS_URL: ws://fakekite:8099/ws
+  KITE_API_KEY: fake-api-key
+  KITE_API_SECRET: fake-api-secret
+  TELEGRAM_BOT_TOKEN: ""
+  # A throwaway age key made by `make dryrun` under data/dryrun/.
+  PMT_BACKUP_AGE_RECIPIENT: ${DRYRUN_AGE_RECIPIENT:-}
+  PMT_BACKUP_AGE_IDENTITY_FILE: /run/age-key.txt
+
+services:
+  fakekite:
+    image: pmt:phase0
+    environment:
+      PMT_CONTAINER: "1"
+      PMT_CLOCK_OFFSET: ${PMT_CLOCK_OFFSET:-}
+    command: ["fakekite", "-listen", "0.0.0.0:8099", "-order-every", "10m"]
+    ports: !override ["127.0.0.1:18099:8099"]
+
+  db:
+    ports: !override ["127.0.0.1:15433:5432"]
+  nats:
+    ports: !override ["127.0.0.1:14222:4222", "127.0.0.1:18222:8222"]
+  prometheus:
+    ports: !override ["127.0.0.1:19090:9090"]
+  sys:
+    environment: *fake
+    ports: !override ["127.0.0.1:18090:8090"]
+
+  # Logs in with the fake request token before anything needs a session.
+  dryrun-login:
+    image: pmt:phase0
+    env_file: .env
+    environment:
+      <<: *fake
+      PMT_CONTAINER: "1"
+      NATS_URL: nats://nats:4222
+      PMT_DATA_DIR: /data
+      PMT_TOKEN_FILE: /data/kite.token
+      PMT_CLOCK_OFFSET: ${PMT_CLOCK_OFFSET:-}
+    command: ["login", "-request-token", "fake-request-token"]
+    volumes: [appdata:/data]
+    depends_on:
+      nats: {condition: service_healthy}
+      fakekite: {condition: service_started}
+
+  ticker:
+    environment: *fake
+    depends_on:
+      dryrun-login: {condition: service_completed_successfully}
+  recorder:
+    environment: *fake
+  jobs:
+    environment: *fake
+    volumes:
+      - ./data/dryrun/age-key.txt:/run/age-key.txt:ro
+    depends_on:
+      dryrun-login: {condition: service_completed_successfully}
+  backuprec:
+    environment: *fake
+    depends_on:
+      dryrun-login: {condition: service_completed_successfully}
+  migrate:
+    environment: *fake

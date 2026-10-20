@@ -1,0 +1,7 @@
+# sys re-exports the health of every service, so it is the only target.
+global:
+  scrape_interval: 15s
+scrape_configs:
+  - job_name: sys
+    static_configs:
+      - targets: ["sys:8090"]

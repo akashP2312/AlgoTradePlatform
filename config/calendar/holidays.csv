@@ -1,0 +1,36 @@
+# NSE/BSE equity and derivatives (segment FO) trading holidays and special sessions.
+# EVERY ROW HERE IS TO VERIFY against the NSE holiday circular for the year before
+# relying on it. Weekday holidays are only advisory to the recorder: if the market
+# trades anyway, ticks are kept and a calendar-mismatch alert fires.
+# kind: holiday | special (special sessions carry open/close in IST).
+date,segment,kind,open,close,note
+2025-02-26,FO,holiday,,,Mahashivratri
+2025-03-14,FO,holiday,,,Holi
+2025-03-31,FO,holiday,,,Id-ul-Fitr
+2025-04-10,FO,holiday,,,Shri Mahavir Jayanti
+2025-04-14,FO,holiday,,,Dr. Baba Saheb Ambedkar Jayanti
+2025-04-18,FO,holiday,,,Good Friday
+2025-05-01,FO,holiday,,,Maharashtra Day
+2025-08-15,FO,holiday,,,Independence Day
+2025-08-27,FO,holiday,,,Ganesh Chaturthi
+2025-10-02,FO,holiday,,,Mahatma Gandhi Jayanti / Dussehra
+2025-10-21,FO,special,13:45,14:45,Diwali Laxmi Pujan (Muhurat trading; timing to verify)
+2025-10-22,FO,holiday,,,Diwali Balipratipada
+2025-11-05,FO,holiday,,,Guru Nanak Jayanti
+2025-12-25,FO,holiday,,,Christmas
+2026-01-26,FO,holiday,,,Republic Day
+2026-03-03,FO,holiday,,,Holi
+2026-03-26,FO,holiday,,,Shri Ram Navami
+2026-03-31,FO,holiday,,,Shri Mahavir Jayanti
+2026-04-03,FO,holiday,,,Good Friday
+2026-04-14,FO,holiday,,,Dr. Baba Saheb Ambedkar Jayanti
+2026-05-01,FO,holiday,,,Maharashtra Day
+2026-05-28,FO,holiday,,,Bakri Id
+2026-06-26,FO,holiday,,,Muharram
+2026-09-14,FO,holiday,,,Ganesh Chaturthi
+2026-10-02,FO,holiday,,,Mahatma Gandhi Jayanti
+2026-10-20,FO,holiday,,,Dussehra
+2026-11-08,FO,special,18:00,19:00,Diwali Laxmi Pujan (Muhurat trading on a Sunday; timing to verify)
+2026-11-10,FO,holiday,,,Diwali Balipratipada
+2026-11-24,FO,holiday,,,Guru Nanak Jayanti
+2026-12-25,FO,holiday,,,Christmas

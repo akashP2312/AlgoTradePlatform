@@ -1,0 +1,18 @@
+# Dated expiry rules. weekday: 0=Sun .. 6=Sat. monthly = last such weekday of the month.
+# If the day is a holiday, expiry moves to the previous trading day.
+# Listed expiries in the daily instrument dump are authoritative; these rules only
+# project dates the dump does not list yet. Rows marked verify need a circular check.
+underlying,cycle,weekday,valid_from,valid_to,note
+NIFTY,weekly,4,2019-02-11,2025-09-01,Thursday weeklies (verify start date)
+NIFTY,monthly,4,2000-06-12,2025-09-01,Last Thursday
+NIFTY,weekly,2,2025-09-01,,Tuesday from 2025-09-01 (SEBI/NSE circular)
+NIFTY,monthly,2,2025-09-01,,Last Tuesday from 2025-09-01
+BANKNIFTY,weekly,4,2016-05-27,2023-09-04,Thursday weeklies (verify)
+BANKNIFTY,weekly,3,2023-09-04,2024-11-20,Wednesday weeklies (verify); weeklies discontinued Nov 2024
+BANKNIFTY,monthly,4,2000-06-12,2024-03-01,Last Thursday (verify)
+BANKNIFTY,monthly,3,2024-03-01,2025-09-01,Last Wednesday (verify)
+BANKNIFTY,monthly,2,2025-09-01,,Last Tuesday from 2025-09-01; monthly only
+FINNIFTY,monthly,2,2025-09-01,,Last Tuesday; monthly only (verify)
+MIDCPNIFTY,monthly,2,2025-09-01,,Last Tuesday; monthly only (verify)
+SENSEX,weekly,4,2025-09-01,,BSE Thursday weeklies from 2025-09-01 (verify)
+SENSEX,monthly,4,2025-09-01,,Last Thursday (verify)
