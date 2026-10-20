@@ -1,0 +1,107 @@
+/* Dense dark terminal. Green/red mean direction of change only, amber is input and
+   focus, grey is a stale feed. Numbers are tabular and right-aligned. */
+
+:root {
+  --bg: #0b0d10;
+  --panel: #101318;
+  --line: #222832;
+  --fg: #d6dbe2;
+  --dim: #7a8492;
+  --amber: #ffb000;
+  --blue: #4da3ff;
+  --green: #36c172;
+  --red: #ef5350;
+  --warn: #e0a030;
+  --stale: #5c6370;
+  --mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font: 12px/1.35 var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.app { display: flex; flex-direction: column; height: 100%; }
+.dock { flex: 1; min-height: 0; }
+
+.dockview-theme-pmt {
+  --dv-background-color: var(--bg);
+  --dv-paneview-active-outline-color: var(--amber);
+  --dv-tabs-and-actions-container-font-size: 11px;
+  --dv-tabs-and-actions-container-height: 24px;
+  --dv-tab-font-size: 11px;
+  --dv-drag-over-background-color: rgba(255, 176, 0, 0.12);
+  --dv-drag-over-border-color: var(--amber);
+  --dv-tabs-container-scrollbar-color: var(--line);
+  --dv-group-view-background-color: var(--panel);
+  --dv-tabs-and-actions-container-background-color: var(--bg);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--panel);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--bg);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--panel);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--bg);
+  --dv-activegroup-visiblepanel-tab-color: var(--amber);
+  --dv-activegroup-hiddenpanel-tab-color: var(--dim);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--fg);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--dim);
+  --dv-tab-divider-color: var(--line);
+  --dv-separator-border: var(--line);
+  --dv-paneview-header-border-color: var(--line);
+  --dv-icon-hover-background-color: var(--line);
+  --dv-floating-box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+  --dv-active-sash-color: var(--amber);
+}
+.dockview-theme-pmt .dv-groupview.dv-active-group { outline: 1px solid var(--amber); outline-offset: -1px; }
+
+.fn-panel { position: relative; height: 100%; overflow: auto; }
+.link-bar { position: absolute; left: 0; top: 0; bottom: 0; width: 3px; }
+.link-amber .link-bar, .chip.link-amber { background: var(--amber); }
+.link-blue .link-bar, .chip.link-blue { background: var(--blue); }
+.link-green .link-bar, .chip.link-green { background: var(--green); }
+.chip { color: #000; padding: 0 5px; border-radius: 2px; margin-right: 4px; }
+
+.panel-body { padding: 6px 10px 10px 12px; }
+.panel-body h3 { margin: 8px 0 4px; font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
+.panel-body section + section { margin-top: 10px; }
+.dim { color: var(--dim); }
+.n { text-align: right; white-space: nowrap; }
+kbd { color: var(--amber); font-family: var(--mono); }
+
+table { border-collapse: collapse; }
+table.kv th { text-align: left; font-weight: normal; color: var(--dim); padding: 1px 14px 1px 0; }
+table.kv td { padding: 1px 0; }
+table.grid { width: 100%; }
+table.grid th { color: var(--dim); font-weight: normal; text-align: left; border-bottom: 1px solid var(--line); padding: 2px 8px 2px 0; }
+table.grid td { padding: 2px 8px 2px 0; border-bottom: 1px solid #161b22; vertical-align: top; }
+table.grid th.n, table.grid td.n { text-align: right; }
+td.detail { white-space: normal; }
+td.detail span { margin-right: 12px; white-space: nowrap; display: inline-block; }
+tr.stale td, td.stale { color: var(--stale); }
+
+.state { padding: 0 4px; border-radius: 2px; font-size: 11px; }
+.st-ok { color: var(--green); }
+.st-warn { color: #000; background: var(--warn); }
+.st-bad { color: #fff; background: var(--red); }
+.st-quiet { color: var(--stale); border: 1px solid var(--stale); }
+
+.list { list-style: none; padding: 0; margin: 0; }
+.list button { background: none; border: 0; color: var(--amber); font: inherit; cursor: pointer; padding: 2px 0; }
+.watermark { display: flex; align-items: center; justify-content: center; height: 100%; }
+
+.statusbar { display: flex; gap: 10px; align-items: center; height: 20px; padding: 0 8px; border-top: 1px solid var(--line); background: var(--bg); font-size: 11px; white-space: nowrap; overflow: hidden; }
+.statusbar .spacer { flex: 1; }
+.statusbar .clock { color: var(--fg); }
+
+.cmdline { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35); display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; z-index: 100; }
+.cmdbox { width: min(640px, calc(100vw - 32px)); background: var(--panel); border: 1px solid var(--amber); }
+.cmdbox input { width: 100%; background: var(--bg); color: var(--amber); border: 0; outline: 0; padding: 8px 10px; font: 14px var(--mono); text-transform: uppercase; }
+.cmdbox input::placeholder { color: var(--stale); text-transform: none; }
+.cmderr { color: var(--red); padding: 4px 10px; }
+.sugg { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+.sugg li { padding: 3px 10px; cursor: pointer; }
+.sugg li.on, .sugg li:hover { background: #1b2028; }
+.sugg b { color: var(--amber); display: inline-block; min-width: 9ch; }

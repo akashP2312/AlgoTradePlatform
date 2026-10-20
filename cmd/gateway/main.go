@@ -46,7 +46,7 @@ func main() {
 	hub := gateway.NewHub(cfg.Gateway.Flush)
 	// Subscribe before seeding, so nothing published in between is lost and
 	// the seed never overwrites a newer live value.
-	for _, subj := range []string{bus.SubjTicks, bus.SubjAnalytics, bus.SubjHealth} {
+	for _, subj := range []string{bus.SubjTicks, bus.SubjAnalytics, bus.SubjHealth, bus.SubjFeed} {
 		sub, err := conn.NC.Subscribe(subj, func(m *nats.Msg) { hub.Publish(m.Subject, m.Data) })
 		if err != nil {
 			app.Fatal("subscribe", err)
