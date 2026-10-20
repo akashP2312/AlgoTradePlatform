@@ -15,3 +15,6 @@ age-key.txt
 .venv/
 __pycache__/
 .pytest_cache/
+
+# Phase 3 gate captures (real positions)
+/gate3/
