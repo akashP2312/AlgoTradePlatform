@@ -72,6 +72,7 @@ type Universe struct {
 type Ticker struct {
 	RecentreSteps    int           `yaml:"recentre_steps"`
 	StaleAfter       time.Duration `yaml:"stale_after"`
+	HaltAfter        time.Duration `yaml:"halt_after"`
 	SilenceReconnect time.Duration `yaml:"silence_reconnect"`
 	KVFlush          time.Duration `yaml:"kv_flush"`
 }
@@ -195,6 +196,7 @@ func (c *Config) defaults() {
 	defI(&c.Kite.OtherPerSec, 10)
 	defI(&c.Ticker.RecentreSteps, 10)
 	defD(&c.Ticker.StaleAfter, 5*time.Second)
+	defD(&c.Ticker.HaltAfter, 30*time.Second)
 	defD(&c.Ticker.SilenceReconnect, 10*time.Second)
 	defD(&c.Ticker.KVFlush, time.Second)
 	defI(&c.Recorder.BatchRows, 5000)

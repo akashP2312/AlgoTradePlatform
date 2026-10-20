@@ -57,7 +57,8 @@ universe:
 
 ticker:
   recentre_steps: 10                # grow the window when spot drifts this many strikes
-  stale_after: 5s                   # index / near future / ATM silence that marks the feed stale
+  stale_after: 5s                   # index and near-future silence that marks an underlying stale
+  halt_after: 30s                   # every token silent, sockets up: an exchange halt (verify threshold)
   silence_reconnect: 10s            # no frames at all for this long forces a reconnect
   kv_flush: 1s
 

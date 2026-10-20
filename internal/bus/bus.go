@@ -29,6 +29,7 @@ const (
 	SubjOrder     = "order.update"
 	SubjAlerts    = "alert.>"
 	SubjHealth    = "sys.*.health"
+	SubjFeed      = "sys.ticker.feed" // per-underlying feed state, every second
 	SubjAnalytics = "analytics.>"
 	SessionKey    = "current"
 	TickPrefix    = "tick."
