@@ -85,7 +85,7 @@ backuprec:
   token_file: ${PMT_TOKEN_FILE}
 
 loaders:
-  user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+  user_agent: "pmt-loaders/1.0 (personal read-only market terminal; +https://github.com/akashP2312/AlgoTradePlatform)"  # honest, never a browser string
   nse_archive: https://nsearchives.nseindia.com    # verify host before relying on it
   niftyindices: https://www.niftyindices.com       # verify host before relying on it
 
@@ -107,6 +107,14 @@ ivengine:
   forward_strikes: 5                # strikes nearest the money in the parity forward median
   vix_roll_days: 3                  # move to the next monthly pair this many days before near expiry (verify)
   calendar: config/calendar/holidays.csv
+
+# pmt-daily (ivengine image) runs the Python EOD jobs, which the Go scheduler cannot:
+# each falls due at `at` IST on a trading day, then waits for every job in `after` to
+# have finished ok today, and runs once; still waiting at `until`, it is recorded as
+# an error. Runs are in job_runs as iv-eod and vol.
+pyschedule:
+  - {at: "19:05", job: iv-eod, after: [bhav]}          # iv_eod from today's bhavcopy
+  - {at: "19:20", job: vol, after: [vix, spotvol]}     # rv_eod, har_eod, vol_score from index_eod
 
 # riskengine: the book's Greeks, scenario grid and flags on risk.book. Values marked
 # (verify) are placeholders until checked against the desk's own numbers.
@@ -154,6 +162,7 @@ schedule:
   - {at: "06:15", job: instruments, catch_up: true}
   - {at: "06:20", job: calendar, catch_up: true}
   - {at: "15:25", job: sweep, trading_day_only: true}
+  - {at: "15:40", job: ivclose, trading_day_only: true}
   - {at: "15:45", job: gaps, trading_day_only: true}
   - {at: "16:15", job: merge-backup, trading_day_only: true}
   - {at: "17:30", job: harvest, trading_day_only: true}
