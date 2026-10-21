@@ -108,6 +108,14 @@ ivengine:
   vix_roll_days: 3                  # move to the next monthly pair this many days before near expiry (verify)
   calendar: config/calendar/holidays.csv
 
+# pmt-daily (ivengine image) runs the Python EOD jobs, which the Go scheduler cannot:
+# each falls due at `at` IST on a trading day, then waits for every job in `after` to
+# have finished ok today, and runs once; still waiting at `until`, it is recorded as
+# an error. Runs are in job_runs as iv-eod and vol.
+pyschedule:
+  - {at: "19:05", job: iv-eod, after: [bhav]}          # iv_eod from today's bhavcopy
+  - {at: "19:20", job: vol, after: [vix, spotvol]}     # rv_eod, har_eod, vol_score from index_eod
+
 # riskengine: the book's Greeks, scenario grid and flags on risk.book. Values marked
 # (verify) are placeholders until checked against the desk's own numbers.
 risk:
