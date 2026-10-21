@@ -59,7 +59,7 @@ var jobs = map[string]job{
 	"merge-backup": {"[--all] [date] load the backup recorder's JSONL for a day", mergeBackup},
 	"harvest":      {"[--force] [date] fetch the day's 1-minute candles", harvestJob},
 	"backfill":     {"[--lookback N --window N] [end] fetch past candles still available", backfill},
-	"bhav":         {"[date] | [--force --pause 3s] from to: load the NSE F&O bhavcopy", bhav},
+	"bhav":         {"[date] | [--force --pause 3s] from to | --dir DIR [--force]: load the NSE F&O bhavcopy", bhav},
 	"partoi":       {"[date] load NSE participant-wise open interest", partOI},
 	"vix":          {"[from [to]] load India VIX and index day closes", vix},
 	"ivclose":      {"[date] copy the ivengine's close-of-day smiles from KV analytics into iv_eod", ivclose},
@@ -591,10 +591,17 @@ func bhav(e *env, args []string) (string, error) {
 	fl := flag.NewFlagSet("bhav", flag.ContinueOnError)
 	force := fl.Bool("force", false, "with a range, reload days already in eod_contracts")
 	pause := fl.Duration("pause", 3*time.Second, "with a range, wait between NSE requests")
+	dir := fl.String("dir", "", "import the bhavcopy files (.zip or .csv) in this folder instead of fetching")
 	if err := fl.Parse(args); err != nil {
 		return "", err
 	}
 	args = fl.Args()
+	if *dir != "" {
+		if len(args) > 0 {
+			return "", errors.New("bhav: --dir takes no dates; each file carries its own")
+		}
+		return e.bhavImport(*dir, *force)
+	}
 	if len(args) < 2 {
 		d, _, err := e.tradingDay(args, 0)
 		if errors.Is(err, errNotTrading) {
@@ -688,22 +695,126 @@ func (e *env) bhavDay(d time.Time) (string, error) {
 		return "", err
 	}
 	e.saveRaw("bhav", d, url, raw)
-	data, err := loaders.Unzip(raw)
+	rows, err := parseBhavFile(raw)
 	if err != nil {
 		return "", err
-	}
-	rows, err := loaders.ParseBhav(data)
-	if err != nil {
-		return "", err
-	}
-	if len(rows) == 0 {
-		return "", errors.New("bhavcopy has no F&O rows")
 	}
 	if !rows[0].TradeDate.Equal(time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, time.UTC)) {
 		return "", fmt.Errorf("bhavcopy is for %s, not %s", rows[0].TradeDate.Format(time.DateOnly), d.Format(time.DateOnly))
 	}
 	n, err := loaders.SaveEOD(e.ctx, e.pool, rows)
 	return fmt.Sprintf("bhav %s (%s): %d rows parsed, %d saved", d.Format(time.DateOnly), rows[0].Source, len(rows), n), err
+}
+
+// parseBhavFile unzips and parses one bhavcopy file. Every row must be for the
+// same trade date, so a merged or mislabelled file is refused whole.
+func parseBhavFile(raw []byte) ([]loaders.EODRow, error) {
+	data, err := loaders.Unzip(raw)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := loaders.ParseBhav(data)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, errors.New("bhavcopy has no F&O rows")
+	}
+	for _, r := range rows[1:] {
+		if !r.TradeDate.Equal(rows[0].TradeDate) {
+			return nil, fmt.Errorf("bhavcopy mixes trade dates %s and %s",
+				rows[0].TradeDate.Format(time.DateOnly), r.TradeDate.Format(time.DateOnly))
+		}
+	}
+	return rows, nil
+}
+
+// bhavFiles lists the bhavcopy files in dir (.zip and .csv, not recursing),
+// sorted by name.
+func bhavFiles(dir string) ([]string, error) {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, en := range ents {
+		n := strings.ToLower(en.Name())
+		if en.Type().IsRegular() && !strings.HasPrefix(n, ".") && (strings.HasSuffix(n, ".zip") || strings.HasSuffix(n, ".csv")) {
+			out = append(out, filepath.Join(dir, en.Name()))
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// bhavImport loads bhavcopy files the user downloaded, for when the archive will
+// not serve this program. The trade date comes from each file's rows, not its
+// name. A day already in eod_contracts is skipped unless force; a file that will
+// not parse is reported and passed over, so one bad download does not stop the rest.
+func (e *env) bhavImport(dir string, force bool) (string, error) {
+	files, err := bhavFiles(dir)
+	if err != nil {
+		return "", err
+	}
+	if len(files) == 0 {
+		return "", fmt.Errorf("bhav: no .zip or .csv files in %s", dir)
+	}
+	var loaded, skipped int
+	var bad []string
+	seen := map[time.Time]string{}
+	var first, last time.Time
+	for _, f := range files {
+		name := filepath.Base(f)
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			return "", err
+		}
+		rows, err := parseBhavFile(raw)
+		if err != nil {
+			bad = append(bad, name+": "+err.Error())
+			continue
+		}
+		d := rows[0].TradeDate
+		if prev, ok := seen[d]; ok {
+			bad = append(bad, fmt.Sprintf("%s: same trade date %s as %s", name, d.Format(time.DateOnly), prev))
+			continue
+		}
+		seen[d] = name
+		if first.IsZero() || d.Before(first) {
+			first = d
+		}
+		if d.After(last) {
+			last = d
+		}
+		if !force {
+			have, err := loaders.HaveEOD(e.ctx, e.pool, d)
+			if err != nil {
+				return "", err
+			}
+			if have {
+				skipped++
+				continue
+			}
+		}
+		e.saveRaw("bhav", d, name, raw)
+		n, err := loaders.SaveEOD(e.ctx, e.pool, rows)
+		if err != nil {
+			return "", fmt.Errorf("%s (%s): %w (loaded %d before stopping)", name, d.Format(time.DateOnly), err, loaded)
+		}
+		loaded++
+		slog.Info(fmt.Sprintf("bhav %s (%s) from %s: %d rows parsed, %d saved", d.Format(time.DateOnly), rows[0].Source, name, len(rows), n))
+	}
+	out := fmt.Sprintf("bhav import %s: %d files, %d days loaded, %d already there, %d refused", dir, len(files), loaded, skipped, len(bad))
+	if !first.IsZero() {
+		out += fmt.Sprintf(", trade dates %s..%s", first.Format(time.DateOnly), last.Format(time.DateOnly))
+	}
+	if len(bad) > 0 {
+		if len(bad) > 10 {
+			bad = append(bad[:10], "...")
+		}
+		out += "; " + strings.Join(bad, "; ")
+	}
+	return out, nil
 }
 
 func partOI(e *env, args []string) (string, error) {
