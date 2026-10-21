@@ -1,0 +1,163 @@
+# Scheduled macro events for newsmon's risk filter. Edit freely: newsmon reloads
+# this file when it changes. Nothing here is a trade signal; a timed event only
+# opens a window (pmt.yaml news.windows) in which the risk state discourages new
+# entries.
+#
+# datetime_ist: "YYYY-MM-DD HH:MM" (timed: opens the window),
+#               "YYYY-MM-DD"       (date known, time not: listed, no window),
+#               ""                 (date not yet confirmed: listed as TBC).
+# verify: true until someone has checked the date AND time against the official
+# source. Every entry starts as verify: true; never invent a date to fill a gap.
+# impact: HIGH | MEDIUM | LOW. affects: NIFTY, BANKNIFTY.
+#
+# F&O expiries are not listed here: newsmon derives them from the listed
+# instruments (news.expiries) so they track holiday shifts automatically.
+
+events:
+  # ---- RBI --------------------------------------------------------------
+  - id: rbi-mpc-2026-12
+    name: RBI MPC policy decision
+    country: IN
+    datetime_ist: "2026-12-04 10:00"
+    impact: HIGH
+    category: rbi_policy
+    affects: [NIFTY, BANKNIFTY]
+    verify: true
+    source: https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=62422
+    note: Date from RBI's FY27 MPC schedule; the 10:00 announcement time is customary, not stated there.
+  - id: rbi-mpc-2027-02
+    name: RBI MPC policy decision
+    country: IN
+    datetime_ist: "2027-02-05 10:00"
+    impact: HIGH
+    category: rbi_policy
+    affects: [NIFTY, BANKNIFTY]
+    verify: true
+    source: https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=62422
+    note: Date from RBI's FY27 MPC schedule; the 10:00 time is customary.
+
+  # ---- Federal Reserve (statement 14:00 US Eastern) ----------------------
+  - id: fomc-2026-10
+    name: FOMC rate decision
+    country: US
+    datetime_ist: "2026-10-28 23:30"
+    impact: HIGH
+    category: fomc
+    affects: [NIFTY, BANKNIFTY]
+    verify: true
+    source: https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm
+    note: Oct 27-28 meeting; 14:00 EDT = 23:30 IST. After NSE hours; the gap shows at the next open.
+  - id: fomc-2026-12
+    name: FOMC rate decision + SEP
+    country: US
+    datetime_ist: "2026-12-10 00:30"
+    impact: HIGH
+    category: fomc
+    affects: [NIFTY, BANKNIFTY]
+    verify: true
+    source: https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm
+    note: Dec 8-9 meeting; 14:00 EST = 00:30 IST next day.
+  - id: fomc-2027-01
+    name: FOMC rate decision
+    country: US
+    datetime_ist: "2027-01-28 00:30"
+    impact: HIGH
+    category: fomc
+    affects: [NIFTY, BANKNIFTY]
+    verify: true
+    source: https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm
+    note: Jan 26-27 meeting; 14:00 EST = 00:30 IST next day.
+  - id: fomc-minutes-tbc
+    name: FOMC minutes (Oct meeting)
+    country: US
+    datetime_ist: ""
+    impact: MEDIUM
+    category: fomc_minutes
+    affects: [NIFTY, BANKNIFTY]
+    verify: true
+    source: https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm
+    note: Released three weeks after each meeting, 14:00 US Eastern. Fill in the date.
+
+  # ---- US data (08:30 US Eastern; EST from Nov 1 = 19:00 IST) -----------
+  - id: us-nfp-2026-11
+    name: US nonfarm payrolls (Oct)
+    country: US
+    datetime_ist: "2026-11-06 19:00"
+    impact: HIGH
+    category: us_jobs
+    affects: [NIFTY, BANKNIFTY]
+    verify: true
+    source: https://www.bls.gov/schedule/2026/home.htm
+    note: Date from a secondary source; bls.gov refused automated access. Check before relying on it.
+  - id: us-nfp-2026-12
+    name: US nonfarm payrolls (Nov)
+    country: US
+    datetime_ist: "2026-12-04 19:00"
+    impact: HIGH
+    category: us_jobs
+    affects: [NIFTY, BANKNIFTY]
+    verify: true
+    source: https://www.bls.gov/schedule/2026/home.htm
+    note: Date from a secondary source; bls.gov refused automated access.
+  - id: us-cpi-tbc
+    name: US CPI
+    country: US
+    datetime_ist: ""
+    impact: HIGH
+    category: us_cpi
+    affects: [NIFTY, BANKNIFTY]
+    verify: true
+    source: https://www.bls.gov/schedule/2026/home.htm
+    note: Monthly, 08:30 US Eastern (19:00 IST in winter). Not verified; add one entry per release.
+
+  # ---- India data --------------------------------------------------------
+  - id: in-cpi-tbc
+    name: India CPI inflation
+    country: IN
+    datetime_ist: ""
+    impact: MEDIUM
+    category: in_cpi
+    affects: [NIFTY, BANKNIFTY]
+    verify: true
+    source: https://www.mospi.gov.in/
+    note: Usually the 12th at 16:00, after the close. Fill in each month's date from MoSPI.
+  - id: in-wpi-tbc
+    name: India WPI inflation
+    country: IN
+    datetime_ist: ""
+    impact: LOW
+    category: in_wpi
+    affects: [NIFTY]
+    verify: true
+    source: https://eaindustry.nic.in/
+    note: Usually the 14th at 12:00.
+  - id: in-iip-tbc
+    name: India industrial production (IIP)
+    country: IN
+    datetime_ist: ""
+    impact: LOW
+    category: in_iip
+    affects: [NIFTY]
+    verify: true
+    source: https://www.mospi.gov.in/
+    note: Usually the 28th, after the close.
+  - id: in-gdp-q2-tbc
+    name: India GDP (Q2 FY27)
+    country: IN
+    datetime_ist: ""
+    impact: MEDIUM
+    category: in_gdp
+    affects: [NIFTY, BANKNIFTY]
+    verify: true
+    source: https://www.mospi.gov.in/
+    note: Usually the last working day of November, 16:00.
+  - id: in-budget-2027
+    name: Union Budget FY28
+    country: IN
+    datetime_ist: ""
+    impact: HIGH
+    category: budget
+    affects: [NIFTY, BANKNIFTY]
+    verify: true
+    source: https://www.indiabudget.gov.in/
+    note: Customarily Feb 1, 11:00. Not announced yet; set the time once it is, and check whether NSE holds a special session.

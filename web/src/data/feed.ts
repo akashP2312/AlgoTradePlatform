@@ -8,7 +8,7 @@
 import { Store } from "./store";
 
 // The gateway allows these prefixes only (internal/gateway/subject.go).
-const PREFIXES = ["tick.", "analytics.", "sys.", "book.", "risk.", "bot."];
+const PREFIXES = ["tick.", "analytics.", "sys.", "book.", "risk.", "bot.", "news."];
 // Subjects per sub/unsub frame, well under the gateway's 64 KiB read limit.
 const CHUNK = 500;
 

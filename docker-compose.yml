@@ -100,6 +100,16 @@ services:
     command: ["riskmon"]
     depends_on: *deps
 
+  # The news risk filter: the event calendar (config/news, hot-reloaded) and F&O
+  # expiries to NORMAL / CAUTION / NO_NEW_ENTRIES on news.risk. Never trades.
+  newsmon:
+    <<: *app
+    command: ["newsmon"]
+    volumes:
+      - appdata:/data
+      - ./config/news:/app/config/news:ro
+    depends_on: *deps
+
   # Reads the algo-trading bot's ledger; mounted read-only, the bot owns it.
   botmon:
     <<: *app

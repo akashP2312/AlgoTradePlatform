@@ -301,3 +301,24 @@ func TestMarkLive(t *testing.T) {
 		t.Errorf("an underlying the ticker does not stream is marked live")
 	}
 }
+
+func TestRiskState(t *testing.T) {
+	if code, _ := apiGet(t, &API{}, "/api/risk-state"); code != 503 {
+		t.Fatalf("no hub: %d", code)
+	}
+	h := NewHub(time.Second)
+	a := &API{Last: h.Last}
+	if code, _ := apiGet(t, a, "/api/risk-state"); code != 503 {
+		t.Fatalf("not published: %d", code)
+	}
+	now := clock.Now().UnixMilli()
+	h.Publish("news.risk", []byte(fmt.Sprintf(`{"ts":%d,"state":"CAUTION","reasons":[{"event":"x"}],"expires_at":%d}`, now, now+60000)))
+	code, out := apiGet(t, a, "/api/risk-state")
+	if code != 200 || out["state"] != "CAUTION" || out["stale"] != false || len(out["reasons"].([]any)) != 1 {
+		t.Fatalf("%d %v", code, out)
+	}
+	h.Publish("news.risk", []byte(fmt.Sprintf(`{"ts":%d,"state":"NORMAL","reasons":[]}`, now-120000)))
+	if _, out := apiGet(t, a, "/api/risk-state"); out["stale"] != true {
+		t.Fatalf("old: %v", out)
+	}
+}

@@ -94,6 +94,14 @@ func (h *Hub) Seed(subject string, data []byte) bool {
 	return true
 }
 
+// Last is the subject's latest value in the cache.
+func (h *Hub) Last(subject string) (json.RawMessage, bool) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	v, ok := h.last[subject]
+	return v, ok
+}
+
 // Clients is the number of connected tabs.
 func (h *Hub) Clients() int {
 	h.mu.RLock()

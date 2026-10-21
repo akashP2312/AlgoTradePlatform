@@ -8,6 +8,7 @@ package gateway
 //	/api/bars?c=<contract>&days=N
 //	/api/straddle?und=NIFTY&x=2026-10-27&days=5[&k=25000]
 //	/api/oi0?und=NIFTY&x=2026-10-27   each strike's OI at the previous close
+//	/api/risk-state             newsmon's news risk state, for strategies to poll
 
 import (
 	"context"
@@ -35,6 +36,8 @@ type API struct {
 	pool atomic.Pointer[pgxpool.Pool]
 	// Universe says which expiries the ticker streams, so /api/ref can mark them.
 	Universe []config.Underlying
+	// Last reads the hub's last-value cache (news.risk for /api/risk-state).
+	Last func(subject string) (json.RawMessage, bool)
 }
 
 func (a *API) SetPool(p *pgxpool.Pool) { a.pool.Store(p) }
@@ -45,6 +48,39 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/bars", a.bars)
 	mux.HandleFunc("GET /api/straddle", a.straddle)
 	mux.HandleFunc("GET /api/oi0", a.oi0)
+	mux.HandleFunc("GET /api/risk-state", a.riskState)
+}
+
+// ---- /api/risk-state -------------------------------------------------------
+
+// riskStale is how old news.risk may be before the answer says stale: newsmon
+// republishes at least every news.publish (15s).
+const riskStale = 60 * time.Second
+
+// riskState answers newsmon's last news.risk: {state, reasons[], expires_at, ...}.
+// It comes from the bus cache, not Postgres. 503 until newsmon has published; a
+// value older than a minute is still returned, with "stale": true, and a strategy
+// should treat stale as unknown, not as NORMAL.
+func (a *API) riskState(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	var v json.RawMessage
+	ok := false
+	if a.Last != nil {
+		v, ok = a.Last("news.risk")
+	}
+	var m map[string]any
+	if ok {
+		ok = json.Unmarshal(v, &m) == nil
+	}
+	if !ok {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"error": "newsmon has not published a risk state"})
+		return
+	}
+	ts, _ := m["ts"].(float64)
+	m["stale"] = clock.Now().Sub(time.UnixMilli(int64(ts))) > riskStale
+	json.NewEncoder(w).Encode(m)
 }
 
 const (

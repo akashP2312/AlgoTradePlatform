@@ -95,6 +95,9 @@ tr.stale td, td.stale { color: var(--stale); }
 .statusbar { display: flex; gap: 10px; align-items: center; height: 20px; padding: 0 8px; border-top: 1px solid var(--line); background: var(--bg); font-size: 11px; white-space: nowrap; overflow: hidden; }
 .statusbar .spacer { flex: 1; }
 .statusbar .clock { color: var(--fg); }
+.risk-banner { display: flex; gap: 14px; align-items: center; padding: 2px 8px; font-size: 12px; white-space: nowrap; overflow: hidden; }
+.risk-banner .why { margin-left: auto; opacity: 0.75; }
+.eco-badge { font-size: 10px; padding: 0 3px; margin-left: 4px; border: 1px solid currentColor; border-radius: 2px; }
 
 .cmdline { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35); display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; z-index: 100; }
 .cmdbox { width: min(640px, calc(100vw - 32px)); background: var(--panel); border: 1px solid var(--amber); }

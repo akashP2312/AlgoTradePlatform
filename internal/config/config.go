@@ -32,6 +32,7 @@ type Config struct {
 	Gateway   Gateway    `yaml:"gateway"`
 	Risk      Risk       `yaml:"risk"`
 	Bot       Bot        `yaml:"bot"`
+	News      News       `yaml:"news"`
 	Schedule  []Schedule `yaml:"schedule"`
 
 	// Dir is the directory relative paths in the file resolve against (the repo root
@@ -163,6 +164,37 @@ type Bot struct {
 // Ledger is the bot's ledger file.
 func (b Bot) Ledger() string { return filepath.Join(b.Dir, "ledger_"+b.Mode+".db") }
 
+// News drives newsmon's risk filter: the scheduled-event calendar and the windows
+// around each event in which the risk state reads CAUTION or NO_NEW_ENTRIES. It
+// is a filter on new entries, never a trade signal, and newsmon places no orders.
+type News struct {
+	Events   string        `yaml:"events"`    // the editable event file, reloaded when it changes
+	Expiries []string      `yaml:"expiries"`  // underlyings whose listed F&O expiries become events
+	ExpiryAt string        `yaml:"expiry_at"` // the expiry event's time, IST
+	Horizon  time.Duration `yaml:"horizon"`   // how far ahead news.events lists
+	Publish  time.Duration `yaml:"publish"`   // news.risk is republished at least this often
+	// Windows by impact (HIGH, MEDIUM, LOW); an impact with no entry has none.
+	Windows map[string]Window `yaml:"windows"`
+	// Categories replace the impact's window for every event in that category.
+	Categories map[string]Window `yaml:"categories"`
+}
+
+// Window is the span around an event's time: NO_NEW_ENTRIES from T-NoEntryBefore
+// to T+NoEntryAfter, CAUTION from T-CautionBefore to T+CautionAfter.
+type Window struct {
+	NoEntryBefore time.Duration `yaml:"no_entry_before"`
+	NoEntryAfter  time.Duration `yaml:"no_entry_after"`
+	CautionBefore time.Duration `yaml:"caution_before"`
+	CautionAfter  time.Duration `yaml:"caution_after"`
+}
+
+func (w Window) check() error {
+	if w.NoEntryBefore < 0 || w.NoEntryAfter < 0 || w.CautionBefore < 0 || w.CautionAfter < 0 {
+		return fmt.Errorf("durations must not be negative")
+	}
+	return nil
+}
+
 type Schedule struct {
 	At             string `yaml:"at"`
 	Job            string `yaml:"job"`
@@ -260,6 +292,22 @@ func (c *Config) defaults() {
 	if c.Bot.Dir != "" && !filepath.IsAbs(c.Bot.Dir) {
 		c.Bot.Dir = filepath.Join(c.Dir, c.Bot.Dir)
 	}
+	def(&c.News.Events, "config/news/events.yaml")
+	if !filepath.IsAbs(c.News.Events) {
+		c.News.Events = filepath.Join(c.Dir, c.News.Events)
+	}
+	if c.News.Expiries == nil {
+		c.News.Expiries = []string{"NIFTY", "BANKNIFTY"}
+	}
+	def(&c.News.ExpiryAt, "15:30:00")
+	defD(&c.News.Horizon, 92*24*time.Hour)
+	defD(&c.News.Publish, 15*time.Second)
+	if c.News.Windows == nil {
+		c.News.Windows = map[string]Window{"HIGH": {
+			NoEntryBefore: 15 * time.Minute, NoEntryAfter: 15 * time.Minute,
+			CautionBefore: 30 * time.Minute, CautionAfter: 45 * time.Minute,
+		}}
+	}
 	defD(&c.Ticker.KVFlush, time.Second)
 	defI(&c.Recorder.BatchRows, 5000)
 	defD(&c.Recorder.FlushEvery, time.Second)
@@ -326,6 +374,22 @@ func (c *Config) validate() error {
 		return fmt.Errorf("config: bot.run_at: %w", err)
 	} else if strings.ContainsAny(b.Name, ".*> ") || b.Name == "" {
 		return fmt.Errorf("config: bot.name must be one subject token")
+	}
+	if _, _, _, err := clock.ParseHMS(c.News.ExpiryAt); err != nil {
+		return fmt.Errorf("config: news.expiry_at: %w", err)
+	}
+	for k, w := range c.News.Windows {
+		if k != "HIGH" && k != "MEDIUM" && k != "LOW" {
+			return fmt.Errorf("config: news.windows: %q is not HIGH, MEDIUM or LOW", k)
+		}
+		if err := w.check(); err != nil {
+			return fmt.Errorf("config: news.windows.%s: %w", k, err)
+		}
+	}
+	for k, w := range c.News.Categories {
+		if err := w.check(); err != nil {
+			return fmt.Errorf("config: news.categories.%s: %w", k, err)
+		}
 	}
 	for _, s := range c.Schedule {
 		if s.Job == "" || s.At == "" {
