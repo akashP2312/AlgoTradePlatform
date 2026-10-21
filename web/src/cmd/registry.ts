@@ -22,6 +22,7 @@ export const FNS: Fn[] = [
   { code: "RISK", title: "Risk: scenario grid, P&L vs spot, gamma by strike, intraday M2M, loss limit and alerts", sec: "none", built: true },
   { code: "BOT", title: "Bot: the algo-trading bot's ledger, daily-run heartbeat, positions, proposed orders, trades (read-only)", sec: "none", built: true },
   { code: "ECO", title: "Economic calendar: scheduled events, the news risk state (NORMAL / CAUTION / NO NEW ENTRIES) and why", sec: "none", built: true },
+  { code: "NEWS", title: "News: headlines with impact score, tone and what holds the risk state; context only, never a signal · NEWS ALL, NEWS 80, NEWS SRC", sec: "none", built: true },
   { code: "W", title: "Workspaces: W, W <name>, W SAVE <name>, W DEL <name>", sec: "none", built: true },
   { code: "HELP", title: "Keys and functions", sec: "none", built: true },
 ];

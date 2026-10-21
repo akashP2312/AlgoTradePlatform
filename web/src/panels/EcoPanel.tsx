@@ -5,7 +5,7 @@
 
 import { feed } from "../data/feed";
 import { usePoll, useSub } from "../data/frame";
-import { countdown, LEVEL_TEXT, levelCls, stale, SUBJ_EVENTS, SUBJ_RISK, type Calendar, type EventRow, type RiskState } from "../data/news";
+import { countdown, LEVEL_TEXT, levelCls, reasonKey, stale, SUBJ_EVENTS, SUBJ_RISK, type Calendar, type EventRow, type RiskState } from "../data/news";
 import { age, clock } from "../fmt";
 import { Msg, since } from "./common";
 
@@ -27,7 +27,7 @@ export function EcoPanel() {
   }), 1);
   const { r, c, now } = v;
   if (!c) return <Msg text={`waiting for ${SUBJ_EVENTS} (is newsmon running?)`} />;
-  const active = new Set((r && !stale(r) ? r.reasons : []).map((x) => x.event));
+  const active = new Set((r && !stale(r) ? r.reasons : []).flatMap((x) => (x.event ? [x.event] : [])));
 
   return (
     <div className="gp">
@@ -42,7 +42,7 @@ export function EcoPanel() {
       </div>
       {r && !stale(r) && r.reasons.length > 0 && (
         <div className="omon-head">
-          {r.reasons.map((x) => <span key={x.event} className={levelCls(x.level)} title={`until ${clock(x.until)}`}>{x.msg}</span>)}
+          {r.reasons.map((x) => <span key={reasonKey(x)} className={levelCls(x.level)} title={`until ${clock(x.until)}`}>{x.msg}</span>)}
         </div>
       )}
       <div className="panel-body mon">
