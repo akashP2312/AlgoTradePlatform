@@ -28,7 +28,7 @@ from .eodiv import database_url
 log = logging.getLogger("pmt-daily")
 
 # The commands a pyschedule entry may name; config picks times, not programs.
-COMMANDS = {"iv-eod": ["pmt-iv-eod"], "vol": ["pmt-vol"], "ivhist": ["pmt-ivhist"], "event": ["pmt-event"]}
+COMMANDS = {"iv-eod": ["pmt-iv-eod"], "vol": ["pmt-vol"], "ivhist": ["pmt-ivhist"], "event": ["pmt-event"], "regime": ["pmt-regime"]}
 TICK = 30.0
 DETAIL = 500
 

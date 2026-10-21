@@ -117,6 +117,7 @@ pyschedule:
   - {at: "19:20", job: vol, after: [vix, spotvol]}     # rv_eod, har_eod, vol_score from index_eod
   - {at: "19:25", job: ivhist, after: [iv-eod, vol]}   # ivcm_eod, vrp_eod from iv_eod and har_eod
   - {at: "19:25", job: event, after: [iv-eod]}         # event_eod from iv_eod and index_eod
+  - {at: "19:30", job: regime, after: [ivhist, vol]}   # regime_eod from vrp_eod, ivcm_eod and rv_eod
 
 # riskengine: the book's Greeks, scenario grid and flags on risk.book. Values marked
 # (verify) are placeholders until checked against the desk's own numbers.
