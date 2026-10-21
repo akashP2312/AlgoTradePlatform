@@ -49,6 +49,12 @@ func TestAPIValidation(t *testing.T) {
 		{"/api/oi0?und=NIFTY&x=2026-10-27", 503},
 		{"/api/oi0?und=NIFTY", 400},
 		{"/api/oi0?und=nifty;drop&x=2026-10-27", 400},
+		{"/api/risk-log?from=2026-10-01&to=2026-10-21", 503},
+		{"/api/risk-log?from=2026-10-01", 503},
+		{"/api/risk-log", 400},
+		{"/api/risk-log?from=01-10-2026", 400},
+		{"/api/risk-log?from=2026-10-21&to=2026-10-01", 400},
+		{"/api/risk-log?from=2025-01-01&to=2026-10-21", 400},
 	}
 	for _, c := range cases {
 		if code, body := apiGet(t, a, c.path); code != c.code {
@@ -322,3 +328,84 @@ func TestRiskState(t *testing.T) {
 		t.Fatalf("old: %v", out)
 	}
 }
+
+func TestAPIRiskLog(t *testing.T) {
+	url := os.Getenv("PMT_TEST_DB")
+	if url == "" {
+		t.Skip("PMT_TEST_DB not set")
+	}
+	ctx := context.Background()
+	rw, err := store.Open(ctx, url, 10*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rw.Close()
+	if _, err := store.Migrate(ctx, rw); err != nil {
+		t.Fatal(err)
+	}
+	// Rows far in the future so they never meet newsmon's own.
+	clean := func() { rw.Exec(ctx, `DELETE FROM news_risk_log WHERE ts >= '2098-01-01'`) }
+	clean()
+	defer clean()
+	at := func(s string) time.Time {
+		t1, err := time.ParseInLocation("2006-01-02 15:04", s, clock.IST)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return t1
+	}
+	for _, r := range []struct {
+		ts, state, prev string
+		exp             *time.Time
+	}{
+		{"2098-12-20 09:00", "NORMAL", "", nil},
+		{"2098-12-31 10:00", "CAUTION", "NORMAL", nil},
+		{"2099-01-05 09:10", "NO_NEW_ENTRIES", "CAUTION", ptr(at("2099-01-05 10:30"))},
+		{"2099-01-05 10:30", "NORMAL", "NO_NEW_ENTRIES", nil},
+		{"2099-01-07 23:50", "CAUTION", "NORMAL", nil}, // after the range, in IST
+	} {
+		var prev *string
+		if r.prev != "" {
+			prev = &r.prev
+		}
+		if _, err := rw.Exec(ctx, `INSERT INTO news_risk_log (ts, state, prev, reasons, expires_at) VALUES ($1,$2,$3,$4,$5)`,
+			at(r.ts), r.state, prev, `[{"kind":"event","name":"t"}]`, r.exp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ro, err := store.OpenReadOnly(ctx, url, 10*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ro.Close()
+	a := &API{}
+	a.SetPool(ro)
+
+	code, body := apiGet(t, a, "/api/risk-log?from=2099-01-01&to=2099-01-06")
+	if code != 200 || body["from"] != "2099-01-01" || body["to"] != "2099-01-06" {
+		t.Fatalf("%d %v", code, body)
+	}
+	prior := body["prior"].(map[string]any)
+	if prior["state"] != "CAUTION" || int64(prior["ts"].(float64)) != at("2098-12-31 10:00").UnixMilli() {
+		t.Errorf("prior %v", prior)
+	}
+	cs := body["changes"].([]any)
+	if len(cs) != 2 {
+		t.Fatalf("changes %v", cs)
+	}
+	c0 := cs[0].(map[string]any)
+	if c0["state"] != "NO_NEW_ENTRIES" || c0["prev"] != "CAUTION" || int64(c0["expires_at"].(float64)) != at("2099-01-05 10:30").UnixMilli() ||
+		len(c0["reasons"].([]any)) != 1 {
+		t.Errorf("change 0 %v", c0)
+	}
+	if _, ok := cs[1].(map[string]any)["expires_at"]; ok {
+		t.Errorf("NORMAL has an expiry: %v", cs[1])
+	}
+
+	// Nothing logged before: prior is null; nothing in range: changes is [], not null.
+	if _, body = apiGet(t, a, "/api/risk-log?from=2098-01-01&to=2098-01-02"); body["prior"] != nil || len(body["changes"].([]any)) != 0 {
+		t.Errorf("empty %v", body)
+	}
+}
+
+func ptr[T any](v T) *T { return &v }

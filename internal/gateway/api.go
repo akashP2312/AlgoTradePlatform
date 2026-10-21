@@ -9,6 +9,7 @@ package gateway
 //	/api/straddle?und=NIFTY&x=2026-10-27&days=5[&k=25000]
 //	/api/oi0?und=NIFTY&x=2026-10-27   each strike's OI at the previous close
 //	/api/risk-state             newsmon's news risk state, for strategies to poll
+//	/api/risk-log?from=2026-10-01&to=2026-10-21   its logged changes, for backtests
 
 import (
 	"context"
@@ -49,6 +50,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/straddle", a.straddle)
 	mux.HandleFunc("GET /api/oi0", a.oi0)
 	mux.HandleFunc("GET /api/risk-state", a.riskState)
+	mux.HandleFunc("GET /api/risk-log", a.riskLog)
 }
 
 // ---- /api/risk-state -------------------------------------------------------
@@ -81,6 +83,80 @@ func (a *API) riskState(w http.ResponseWriter, r *http.Request) {
 	ts, _ := m["ts"].(float64)
 	m["stale"] = clock.Now().Sub(time.UnixMilli(int64(ts))) > riskStale
 	json.NewEncoder(w).Encode(m)
+}
+
+// ---- /api/risk-log ---------------------------------------------------------
+
+// maxLogDays bounds one /api/risk-log request.
+const maxLogDays = 400
+
+type riskChange struct {
+	TS        int64           `json:"ts"`
+	State     string          `json:"state"`
+	Prev      string          `json:"prev,omitempty"`
+	Reasons   json.RawMessage `json:"reasons"`
+	ExpiresAt int64           `json:"expires_at,omitempty"`
+}
+
+// riskLog answers news_risk_log between two IST dates, inclusive, oldest first,
+// plus "prior", the last change before from, so a replay knows the state the
+// range opens in. A change is logged only when the level changes; the log cannot
+// tell when newsmon was down, so a replay should not read a gap as NORMAL.
+func (a *API) riskLog(w http.ResponseWriter, r *http.Request) {
+	var from, to time.Time
+	a.serve(w, r, func(ctx context.Context, p *pgxpool.Pool) (any, error) {
+		return queryRiskLog(ctx, p, from, to)
+	}, func() (err error) {
+		q := r.URL.Query()
+		if from, err = time.ParseInLocation(time.DateOnly, q.Get("from"), clock.IST); err != nil {
+			return bad("from must be a date, e.g. 2026-10-01")
+		}
+		to = clock.Today()
+		if s := q.Get("to"); s != "" {
+			if to, err = time.ParseInLocation(time.DateOnly, s, clock.IST); err != nil {
+				return bad("to must be a date, e.g. 2026-10-21")
+			}
+		}
+		if to.Before(from) || to.Sub(from) > maxLogDays*24*time.Hour {
+			return bad("to must be on or after from, at most 400 days later")
+		}
+		return nil
+	})
+}
+
+func queryRiskLog(ctx context.Context, q pgxQuerier, from, to time.Time) (any, error) {
+	end := to.AddDate(0, 0, 1)
+	rows, err := q.Query(ctx, `(SELECT ts, state, prev, reasons, expires_at FROM news_risk_log
+		WHERE ts < $1 ORDER BY ts DESC LIMIT 1)
+		UNION ALL
+		(SELECT ts, state, prev, reasons, expires_at FROM news_risk_log WHERE ts >= $1 AND ts < $2)
+		ORDER BY ts`, from, end)
+	if err != nil {
+		return nil, err
+	}
+	var prior *riskChange
+	changes := []riskChange{}
+	var ts time.Time
+	var st string
+	var prev *string
+	var rs []byte
+	var exp *time.Time
+	_, err = pgx.ForEachRow(rows, []any{&ts, &st, &prev, &rs, &exp}, func() error {
+		c := riskChange{TS: ts.UnixMilli(), State: st, Reasons: json.RawMessage(append([]byte(nil), rs...))}
+		if prev != nil {
+			c.Prev = *prev
+		}
+		if exp != nil {
+			c.ExpiresAt = exp.UnixMilli()
+		}
+		if ts.Before(from) {
+			prior = &c
+		} else {
+			changes = append(changes, c)
+		}
+		return nil
+	})
+	return map[string]any{"from": from.Format(time.DateOnly), "to": to.Format(time.DateOnly), "prior": prior, "changes": changes}, err
 }
 
 const (
