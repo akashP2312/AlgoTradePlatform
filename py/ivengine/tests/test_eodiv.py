@@ -43,7 +43,7 @@ def test_flat_vol_comes_back(cal):
     rows = compute("NIFTY", DAY, bhav(cal), cal, cfg(), Filters())
     assert [r["expiry"] for r in rows] == [X1, X2]
     for r in rows:
-        assert r["source"] == "bhav" and r["model_version"] == "bhav-settle-1"
+        assert r["source"] == "bhav" and r["model_version"] == "bhav-settle-2"
         assert r["fsrc"] == "parity"
         assert r["fwd"] == pytest.approx(F0, abs=1.0)
         assert r["atm_iv"] == pytest.approx(VOL, abs=0.002)

@@ -33,7 +33,7 @@ from .engine import Book, Engine, Params
 
 log = logging.getLogger("iveod")
 
-MODEL = "bhav-settle-1"
+MODEL = "bhav-settle-2"
 
 
 @dataclass
