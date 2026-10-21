@@ -2,8 +2,10 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadRepoConfig(t *testing.T) {
@@ -52,5 +54,13 @@ func TestLoadRepoConfig(t *testing.T) {
 	}
 	if !ids["rbi_press"] || !ids["et_markets"] || paid != 1 {
 		t.Fatalf("sources %v, paid %d", ids, paid)
+	}
+	k := c.News.Classify
+	if k.CautionImpact != 80 || k.CautionFor != 10*time.Minute || k.Corroborate != 2 || k.Fresh != 30*time.Minute ||
+		len(k.Trusted) != 2 || k.LLM.Enabled || k.LLM.KeyEnv != "ANTHROPIC_API_KEY" || k.LLM.PerHour <= 0 {
+		t.Fatalf("classify = %+v", k)
+	}
+	if _, err := os.Stat(k.Rules); err != nil || !filepath.IsAbs(k.Rules) {
+		t.Fatalf("rules %q: %v", k.Rules, err)
 	}
 }

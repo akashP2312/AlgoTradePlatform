@@ -5,8 +5,10 @@
 //
 // It also polls RSS and Atom feeds (official, exchange and media sources), each
 // isolated behind its own backoff and circuit breaker and gated by robots.txt,
-// and publishes the deduplicated headlines on news.feed. Headlines do not move
-// the risk state yet.
+// and publishes the deduplicated headlines on news.feed. Each headline is scored
+// 0-100 by the editable rules file (and, optionally, raised by a model); a fresh
+// one at news.classify.caution_impact holds CAUTION for a while once a trusted
+// source publishes it or enough distinct sources carry it.
 package newsmon
 
 import (

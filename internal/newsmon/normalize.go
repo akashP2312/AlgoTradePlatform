@@ -32,6 +32,13 @@ type Item struct {
 	LagMs    int64    `json:"lag_ms,omitempty"`    // seen − pub, for items that arrived while running
 	Also     []string `json:"also,omitempty"`      // other sources that carried the same story
 
+	Impact    int       `json:"impact,omitempty"`    // the rules' score, 0-100: how much it may move markets, not which way
+	Tags      []string  `json:"tags,omitempty"`      // of the rules it matched
+	Rules     []string  `json:"rules,omitempty"`     // the rules it matched, highest first
+	Backfill  bool      `json:"backfill,omitempty"`  // from a source's first poll
+	Confirmed int64     `json:"confirmed,omitempty"` // when it began to count: a trusted source, or enough sources
+	LLM       *LLMScore `json:"llm,omitempty"`       // the optional model rescore
+
 	GUID  string `json:"-"`
 	canon string // CanonURL(URL), the dedupe key
 }
@@ -170,6 +177,15 @@ func Normalize(src config.Source, loc *time.Location, r RawItem, seen time.Time)
 
 // age is how old the item is at now: from its time, or for a day-only item from
 // the end of its day; zero when it has no timestamp.
+// Score is the headline's effective impact: the rules' score, or the model's
+// when it is higher. The model can only raise it.
+func (it *Item) Score() int {
+	if it.LLM != nil && it.LLM.Impact > it.Impact {
+		return it.LLM.Impact
+	}
+	return it.Impact
+}
+
 func (it *Item) age(now time.Time) time.Duration {
 	if it.Pub == 0 {
 		return 0

@@ -178,6 +178,33 @@ type News struct {
 	// Categories replace the impact's window for every event in that category.
 	Categories map[string]Window `yaml:"categories"`
 	Feeds      Feeds             `yaml:"feeds"`
+	Classify   Classify          `yaml:"classify"`
+}
+
+// Classify scores each headline 0-100 by the rules file and holds the risk state
+// at CAUTION for a while after a fresh, high-impact one from a trusted source
+// (or from media once enough distinct sources carry it). It never makes a
+// headline a trade signal.
+type Classify struct {
+	Rules         string        `yaml:"rules"`          // the editable rules file, reloaded when it changes
+	CautionImpact int           `yaml:"caution_impact"` // a headline at or above this impact holds CAUTION
+	CautionFor    time.Duration `yaml:"caution_for"`    // for this long after it was seen (or corroborated)
+	Trusted       []string      `yaml:"trusted"`        // source trusts that count on their own
+	Corroborate   int           `yaml:"corroborate"`    // distinct sources a headline from any other trust needs
+	Fresh         time.Duration `yaml:"fresh"`          // a headline published longer ago than this when seen holds nothing
+	LLM           LLM           `yaml:"llm"`
+}
+
+// LLM optionally rescores headlines the rules already rate at least MinRule. It
+// can only raise an impact, never lower it, and it is off by default.
+type LLM struct {
+	Enabled bool          `yaml:"enabled"`
+	Model   string        `yaml:"model"`
+	KeyEnv  string        `yaml:"key_env"` // the environment variable holding the API key
+	URL     string        `yaml:"url"`
+	MinRule int           `yaml:"min_rule"` // only headlines the rules score at least this are sent
+	PerHour int           `yaml:"per_hour"` // at most this many requests an hour
+	Timeout time.Duration `yaml:"timeout"`
 }
 
 // Feeds is newsmon's headline ingestion: each source is polled on its own, with
@@ -359,6 +386,24 @@ func (c *Config) defaults() {
 		def(&f.Sources[i].Kind, "rss")
 		def(&f.Sources[i].TZ, "Asia/Kolkata")
 	}
+	k := &c.News.Classify
+	def(&k.Rules, "config/news/rules.yaml")
+	if !filepath.IsAbs(k.Rules) {
+		k.Rules = filepath.Join(c.Dir, k.Rules)
+	}
+	defI(&k.CautionImpact, 80)
+	defD(&k.CautionFor, 10*time.Minute)
+	if k.Trusted == nil {
+		k.Trusted = []string{"official", "exchange"}
+	}
+	defI(&k.Corroborate, 2)
+	defD(&k.Fresh, 30*time.Minute)
+	def(&k.LLM.Model, "claude-haiku-5-5")
+	def(&k.LLM.KeyEnv, "ANTHROPIC_API_KEY")
+	def(&k.LLM.URL, "https://api.anthropic.com/v1/messages")
+	defI(&k.LLM.MinRule, 40)
+	defI(&k.LLM.PerHour, 60)
+	defD(&k.LLM.Timeout, 10*time.Second)
 	defD(&c.Ticker.KVFlush, time.Second)
 	defI(&c.Recorder.BatchRows, 5000)
 	defD(&c.Recorder.FlushEvery, time.Second)
@@ -445,6 +490,9 @@ func (c *Config) validate() error {
 	if err := c.News.Feeds.check(); err != nil {
 		return fmt.Errorf("config: news.feeds: %w", err)
 	}
+	if err := c.News.Classify.check(); err != nil {
+		return fmt.Errorf("config: news.classify: %w", err)
+	}
 	for _, s := range c.Schedule {
 		if s.Job == "" || s.At == "" {
 			return fmt.Errorf("config: schedule entry needs at and job")
@@ -475,6 +523,35 @@ var (
 	sourceKinds  = map[string]bool{"rss": true, "paid": true}
 	sourceTrusts = map[string]bool{"official": true, "exchange": true, "media": true}
 )
+
+func (k Classify) check() error {
+	switch {
+	case k.CautionImpact < 1 || k.CautionImpact > 100:
+		return fmt.Errorf("caution_impact must be in 1..100")
+	case k.CautionFor <= 0 || k.Fresh <= 0:
+		return fmt.Errorf("caution_for and fresh must be positive")
+	case k.Corroborate < 1:
+		return fmt.Errorf("corroborate must be at least 1")
+	}
+	for _, t := range k.Trusted {
+		if !sourceTrusts[t] {
+			return fmt.Errorf("trusted: %q is not official, exchange or media", t)
+		}
+	}
+	l := k.LLM
+	switch {
+	case !l.Enabled:
+	case l.MinRule < 0 || l.MinRule > 100:
+		return fmt.Errorf("llm.min_rule must be in 0..100")
+	case l.PerHour < 1 || l.Timeout <= 0:
+		return fmt.Errorf("llm.per_hour and llm.timeout must be positive")
+	case !strings.HasPrefix(l.URL, "https://"):
+		return fmt.Errorf("llm.url must be https")
+	case l.KeyEnv == "" || l.Model == "":
+		return fmt.Errorf("llm.key_env and llm.model are required")
+	}
+	return nil
+}
 
 func (f Feeds) check() error {
 	if f.Poll < 10*time.Second {

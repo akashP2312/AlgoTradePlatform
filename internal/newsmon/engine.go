@@ -53,8 +53,11 @@ func (l *Level) UnmarshalJSON(b []byte) error {
 // Reason is one thing holding the state above NORMAL. Times are epoch ms.
 type Reason struct {
 	Level  Level  `json:"level"`
-	Kind   string `json:"kind"` // "event"; headlines and market stress come later
+	Kind   string `json:"kind"` // "event" or "headline"; market stress comes later
 	Event  string `json:"event,omitempty"`
+	Item   string `json:"item,omitempty"`   // the headline's id
+	Source string `json:"source,omitempty"` // and its source
+	Score  int    `json:"score,omitempty"`  // and its impact, 0-100
 	Name   string `json:"name"`
 	Impact string `json:"impact,omitempty"`
 	At     int64  `json:"at,omitempty"` // the event's time
@@ -111,8 +114,17 @@ func (w Windows) spans(e *Event) (ne, ca [2]time.Time, ok bool) {
 
 func in(s [2]time.Time, t time.Time) bool { return !t.Before(s[0]) && t.Before(s[1]) }
 
+// Hold is a level held over [From, Until) for something other than a calendar
+// event, such as a high-impact headline. Reason says why; its Until is set from
+// the hold's.
+type Hold struct {
+	Level       Level
+	From, Until time.Time
+	Reason      Reason
+}
+
 // Eval returns the level at now and the reasons for it, worst first.
-func Eval(now time.Time, events []Event, w Windows) (Level, []Reason) {
+func Eval(now time.Time, events []Event, w Windows, holds ...Hold) (Level, []Reason) {
 	lvl := Normal
 	var rs []Reason
 	for i := range events {
@@ -132,6 +144,20 @@ func Eval(now time.Time, events []Event, w Windows) (Level, []Reason) {
 		}
 		r.Kind, r.Event, r.Name, r.Impact, r.At, r.Verify = "event", e.ID, e.Name, e.Impact, bus.Ms(e.At), e.Verify
 		r.Msg = describe(now, e)
+		rs = append(rs, r)
+		if r.Level > lvl {
+			lvl = r.Level
+		}
+	}
+	for _, h := range holds {
+		if !in([2]time.Time{h.From, h.Until}, now) || h.Level == Normal {
+			continue
+		}
+		r := h.Reason
+		r.Level, r.Until = h.Level, bus.Ms(h.Until)
+		if r.At == 0 {
+			r.At = bus.Ms(h.From)
+		}
 		rs = append(rs, r)
 		if r.Level > lvl {
 			lvl = r.Level
@@ -170,9 +196,9 @@ func short(d time.Duration) string {
 
 // Assess is the full state at now: the level, its reasons, when the level next
 // changes (the first window edge after now at which it differs; for NORMAL, the
-// start of the next window), and the next HIGH event.
-func Assess(now time.Time, events []Event, w Windows) RiskState {
-	lvl, rs := Eval(now, events, w)
+// start of the next window), and the next HIGH event. Holds count like windows.
+func Assess(now time.Time, events []Event, w Windows, holds ...Hold) RiskState {
+	lvl, rs := Eval(now, events, w, holds...)
 	if rs == nil {
 		rs = []Reason{}
 	}
@@ -190,9 +216,16 @@ func Assess(now time.Time, events []Event, w Windows) RiskState {
 			}
 		}
 	}
+	for _, h := range holds {
+		for _, t := range []time.Time{h.From, h.Until} {
+			if t.After(now) {
+				edges = append(edges, t)
+			}
+		}
+	}
 	sort.Slice(edges, func(i, j int) bool { return edges[i].Before(edges[j]) })
 	for _, t := range edges {
-		if l, _ := Eval(t, events, w); l != lvl {
+		if l, _ := Eval(t, events, w, holds...); l != lvl {
 			st.ExpiresAt = bus.Ms(t)
 			break
 		}

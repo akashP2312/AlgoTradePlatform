@@ -38,16 +38,18 @@ type Service struct {
 	Cal    *calendar.Calendar
 	Feed   *Ingest // headlines; built in Run when nil
 
-	mu      sync.Mutex
-	file    []Event // from the event file
-	expiry  []Event // derived from the listed instruments
-	expDay  time.Time
-	mtime   time.Time
-	loaded  time.Time
-	fileErr string
-	expErr  string
-	state   RiskState
-	started bool
+	mu       sync.Mutex
+	file     []Event // from the event file
+	expiry   []Event // derived from the listed instruments
+	expDay   time.Time
+	mtime    time.Time
+	loaded   time.Time
+	fileErr  string
+	expErr   string
+	rulesAt  time.Time // the rules file's mtime
+	rulesErr string
+	state    RiskState
+	started  bool
 }
 
 func (s *Service) Health() (bool, map[string]string) {
@@ -65,6 +67,14 @@ func (s *Service) Health() (bool, map[string]string) {
 		d["expiries_err"] = s.expErr
 	}
 	if s.Feed != nil {
+		s.Feed.mu.Lock()
+		if s.Feed.rules != nil {
+			d["rules"] = fmt.Sprint(len(s.Feed.rules.Rules))
+		}
+		if s.Feed.rulesErr != "" {
+			d["rules_err"] = s.Feed.rulesErr
+		}
+		s.Feed.mu.Unlock()
 		// A feed outage is reported, never a health failure: the calendar still filters.
 		ok, n, items := s.Feed.Health()
 		d["feed_sources"] = fmt.Sprintf("%d/%d ok", ok, n)
@@ -112,6 +122,35 @@ func (s *Service) reloadFile(ctx context.Context) bool {
 	s.file, s.mtime, s.loaded, s.fileErr = es, fi.ModTime(), clock.Now(), ""
 	slog.Info("newsmon: event file loaded", "events", len(es))
 	return true
+}
+
+// reloadRules rereads the classifier rules when the file's mtime moved. A bad
+// edit keeps the previous rules in force and says why.
+func (s *Service) reloadRules(ctx context.Context) {
+	path := s.Cfg.News.Classify.Rules
+	fi, err := os.Stat(path)
+	if err == nil && fi.ModTime().Equal(s.rulesAt) {
+		return
+	}
+	var rs *Rules
+	if err == nil {
+		s.rulesAt = fi.ModTime()
+		rs, err = LoadRules(path)
+	} else {
+		s.rulesAt = time.Time{}
+	}
+	if err != nil {
+		if msg := err.Error(); msg != s.rulesErr {
+			s.rulesErr = msg
+			slog.Warn("newsmon: rules file", "path", path, "err", err)
+			s.Notify.Send(ctx, notify.Warn, "news_rules", "headline rules not loaded, previous rules kept: %v", err)
+		}
+		s.Feed.SetRules(nil, err)
+		return
+	}
+	s.rulesErr = ""
+	s.Feed.SetRules(rs, nil)
+	slog.Info("newsmon: headline rules loaded", "rules", len(rs.Rules))
 }
 
 // loadExpiries derives F&O expiry events from the listed instruments, once a day.
@@ -178,7 +217,8 @@ func same(a, b RiskState) bool {
 		return false
 	}
 	for i := range a.Reasons {
-		if a.Reasons[i].Event != b.Reasons[i].Event || a.Reasons[i].Level != b.Reasons[i].Level {
+		x, y := a.Reasons[i], b.Reasons[i]
+		if x.Kind != y.Kind || x.Event != y.Event || x.Item != y.Item || x.Level != y.Level {
 			return false
 		}
 	}
@@ -230,10 +270,19 @@ func (s *Service) Run(ctx context.Context) error {
 	s.state = RiskState{State: prev, Since: bus.Ms(now)}
 	if s.Feed == nil {
 		s.Feed = NewIngest(s.Cfg.News.Feeds, s.DB)
+		s.Feed.Class = s.Cfg.News.Classify
 	}
 	s.started = true
 	s.mu.Unlock()
 	pubEvents(now)
+	s.reloadRules(ctx)
+	if llm, err := NewLLMClient(s.Cfg.News.Classify.LLM); err != nil {
+		slog.Warn("newsmon: " + err.Error())
+	} else if llm != nil {
+		s.Feed.LLM = llm
+		go llm.Run(ctx, s.Feed.SetLLM)
+		slog.Info("newsmon: llm classifier on", "model", llm.Cfg.Model, "per_hour", llm.Cfg.PerHour)
+	}
 	if err := s.Feed.Seed(ctx, now); err != nil {
 		slog.Warn("newsmon: reload headlines", "err", err)
 	}
@@ -264,6 +313,7 @@ func (s *Service) Run(ctx context.Context) error {
 		if now.Sub(lastFile) >= 5*time.Second {
 			lastFile = now
 			changed = s.reloadFile(ctx)
+			s.reloadRules(ctx)
 		}
 		s.mu.Lock()
 		stale := !s.expDay.Equal(clock.Date(now))
@@ -287,8 +337,9 @@ func (s *Service) Run(ctx context.Context) error {
 			lastFeed = now
 		}
 
+		holds := s.Feed.Holds(now)
 		s.mu.Lock()
-		st := Assess(now, s.all(), s.windows())
+		st := Assess(now, s.all(), s.windows(), holds...)
 		old := s.state
 		if st.State != old.State {
 			st.Since = st.TS
@@ -304,7 +355,7 @@ func (s *Service) Run(ctx context.Context) error {
 			if st.State == NoNewEntries {
 				lvl = notify.Warn
 			}
-			msg := "no scheduled event window"
+			msg := "no event window or headline in force"
 			if len(st.Reasons) > 0 {
 				msg = st.Reasons[0].Msg
 			}

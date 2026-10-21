@@ -2,6 +2,8 @@ package newsmon
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log/slog"
 	"slices"
 	"sort"
@@ -22,9 +24,11 @@ const (
 
 // Feed is news.feed: the latest headlines, newest first, and each source's health.
 type Feed struct {
-	TS      int64          `json:"ts"`
-	Items   []Item         `json:"items"`
-	Sources []SourceStatus `json:"sources"`
+	TS       int64          `json:"ts"`
+	Items    []Item         `json:"items"`
+	Sources  []SourceStatus `json:"sources"`
+	Rules    int            `json:"rules"`               // classifier rules in force
+	RulesErr string         `json:"rules_err,omitempty"` // why the rules file was not loaded; the previous rules stay
 }
 
 // SourceStatus is one source's poll health. Times are epoch ms.
@@ -53,15 +57,19 @@ const lagKeep = 50
 // Ingest holds the deduplicated headlines and each source's status. Pollers add
 // to it from their own goroutines.
 type Ingest struct {
-	Cfg config.Feeds
-	DB  store.Querier // nil: nothing is stored
+	Cfg   config.Feeds
+	Class config.Classify
+	DB    store.Querier // nil: nothing is stored
+	LLM   *LLMClient    // nil: rules only
 
-	mu     sync.Mutex
-	ded    *Deduper
-	items  []Item // newest first, at most Cfg.Keep
-	status map[string]*SourceStatus
-	order  []string
-	dirty  bool
+	mu       sync.Mutex
+	rules    *Rules
+	rulesErr string
+	ded      *Deduper
+	items    []Item // newest first, at most Cfg.Keep
+	status   map[string]*SourceStatus
+	order    []string
+	dirty    bool
 }
 
 func NewIngest(cfg config.Feeds, db store.Querier) *Ingest {
@@ -86,7 +94,10 @@ func NewIngest(cfg config.Feeds, db store.Querier) *Ingest {
 func (in *Ingest) Add(ctx context.Context, src config.Source, loc *time.Location, raws []RawItem, backfill bool, seen time.Time) int {
 	real := clock.Real(seen)
 	var ins []Item
-	type alsoUpd struct{ id, src string }
+	type alsoUpd struct {
+		id, src   string
+		confirmed int64
+	}
 	var also []alsoUpd
 
 	in.mu.Lock()
@@ -98,8 +109,10 @@ func (in *Ingest) Add(ctx context.Context, src config.Source, loc *time.Location
 		}
 		origID, origSrc, dup := in.ded.Check(&it)
 		if dup {
-			if origSrc != src.ID && in.addAlso(origID, src.ID) {
-				also = append(also, alsoUpd{origID, src.ID})
+			if origSrc != src.ID {
+				if ok, conf := in.addAlso(origID, src, seen); ok {
+					also = append(also, alsoUpd{origID, src.ID, conf})
+				}
 			}
 			continue
 		}
@@ -116,6 +129,11 @@ func (in *Ingest) Add(ctx context.Context, src config.Source, loc *time.Location
 		if !backfill && st != nil {
 			st.New++
 		}
+		it.Backfill = backfill
+		in.classify(&it)
+		if in.trusted(it.Trust) || in.Class.Corroborate <= 1 {
+			it.Confirmed = it.Seen
+		}
 		ins = append(ins, it)
 		in.insert(it)
 	}
@@ -124,6 +142,15 @@ func (in *Ingest) Add(ctx context.Context, src config.Source, loc *time.Location
 	}
 	in.mu.Unlock()
 
+	if in.LLM != nil {
+		for i := range ins {
+			// Only what the rules rate as possibly material but below CAUTION: the
+			// model can only raise a score, and higher ones hold CAUTION already.
+			if it := &ins[i]; !it.Backfill && it.Impact >= in.LLM.Cfg.MinRule && it.Impact < in.Class.CautionImpact {
+				in.LLM.Enqueue(*it)
+			}
+		}
+	}
 	if in.DB == nil {
 		return len(ins)
 	}
@@ -131,26 +158,130 @@ func (in *Ingest) Add(ctx context.Context, src config.Source, loc *time.Location
 		in.store(ctx, it)
 	}
 	for _, a := range also {
-		if _, err := in.DB.Exec(ctx, `UPDATE news_items SET also = array_append(also, $2) WHERE id = $1 AND NOT ($2 = ANY(also))`, a.id, a.src); err != nil {
+		var conf *time.Time
+		if a.confirmed != 0 {
+			t := bus.FromMs(a.confirmed)
+			conf = &t
+		}
+		if _, err := in.DB.Exec(ctx, `UPDATE news_items SET also = array_append(also, $2), confirmed = COALESCE(confirmed, $3)
+			WHERE id = $1 AND NOT ($2 = ANY(also))`, a.id, a.src, conf); err != nil {
 			slog.Warn("newsmon: news_items also", "err", err)
 		}
 	}
 	return len(ins)
 }
 
-// addAlso records that src also carried the story id; false if it already had.
-// Under in.mu.
-func (in *Ingest) addAlso(id, src string) bool {
+func (in *Ingest) trusted(trust string) bool { return slices.Contains(in.Class.Trusted, trust) }
+
+// classify scores it with the rules in force. Under in.mu.
+func (in *Ingest) classify(it *Item) {
+	sc := in.rules.Classify(it)
+	it.Impact, it.Tags, it.Rules = sc.Impact, sc.Tags, sc.Rules
+}
+
+// SetRules puts new classifier rules in force and rescores the feed, or, given
+// an error, keeps the previous rules and reports why.
+func (in *Ingest) SetRules(rs *Rules, err error) {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	in.dirty = true
+	if err != nil {
+		in.rulesErr = err.Error()
+		return
+	}
+	in.rules, in.rulesErr = rs, ""
+	for i := range in.items {
+		in.classify(&in.items[i])
+	}
+}
+
+// SetLLM records the model's rescore of a headline.
+func (in *Ingest) SetLLM(ctx context.Context, id string, sc LLMScore) {
+	in.mu.Lock()
 	for i := range in.items {
 		if in.items[i].ID == id {
-			if slices.Contains(in.items[i].Also, src) {
-				return false
-			}
-			in.items[i].Also = append(in.items[i].Also, src)
-			return true
+			in.items[i].LLM = &sc
+			in.dirty = true
 		}
 	}
-	return true // not in the feed any more; the stored row still learns it
+	in.mu.Unlock()
+	if in.DB == nil {
+		return
+	}
+	b, _ := json.Marshal(sc)
+	if _, err := in.DB.Exec(ctx, `UPDATE news_items SET llm = $2 WHERE id = $1`, id, b); err != nil {
+		slog.Warn("newsmon: news_items llm", "err", err)
+	}
+}
+
+// fresh says whether it was still news when it began to count: published at
+// most Class.Fresh before. Without a publish time, backfill is not fresh.
+func (in *Ingest) fresh(it *Item) bool {
+	if it.Pub == 0 || it.DateOnly {
+		return !it.Backfill
+	}
+	return clock.Real(bus.FromMs(it.Confirmed)).Sub(bus.FromMs(it.Pub)) <= in.Class.Fresh
+}
+
+// Holds are the headlines holding CAUTION at now: impact at least
+// Class.CautionImpact, fresh, for Class.CautionFor after they began to count.
+func (in *Ingest) Holds(now time.Time) []Hold {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	c := in.Class
+	if c.CautionImpact <= 0 || c.CautionFor <= 0 {
+		return nil
+	}
+	var hs []Hold
+	for i := range in.items {
+		it := &in.items[i]
+		n := it.Score()
+		if it.Confirmed == 0 || n < c.CautionImpact || !in.fresh(it) {
+			continue
+		}
+		from := bus.FromMs(it.Confirmed)
+		until := from.Add(c.CautionFor)
+		if now.Before(from) || !now.Before(until) {
+			continue
+		}
+		why := "rules"
+		if len(it.Rules) > 0 {
+			why = it.Rules[0]
+		}
+		if it.LLM != nil && it.LLM.Impact > it.Impact {
+			why = "llm: " + it.LLM.Why
+		}
+		by := it.Source
+		if len(it.Also) > 0 {
+			by = fmt.Sprintf("%s +%d", it.Source, len(it.Also))
+		}
+		hs = append(hs, Hold{Level: Caution, From: from, Until: until, Reason: Reason{
+			Kind: "headline", Item: it.ID, Source: it.Source, Score: n, Name: it.Title,
+			Msg: fmt.Sprintf("headline impact %d (%s, %s): %s", n, why, by, it.Title),
+		}})
+	}
+	return hs
+}
+
+// addAlso records that src also carried the story id, seen at seen; false if it
+// already had. The story begins to count (confirmed, epoch ms) once a trusted
+// source carries it or Class.Corroborate distinct sources do. Under in.mu.
+func (in *Ingest) addAlso(id string, src config.Source, seen time.Time) (bool, int64) {
+	for i := range in.items {
+		it := &in.items[i]
+		if it.ID != id {
+			continue
+		}
+		if slices.Contains(it.Also, src.ID) {
+			return false, 0
+		}
+		it.Also = append(it.Also, src.ID)
+		if it.Confirmed == 0 && (in.trusted(src.Trust) || 1+len(it.Also) >= in.Class.Corroborate) {
+			it.Confirmed = bus.Ms(seen)
+		}
+		return true, it.Confirmed
+	}
+	return true, 0 // not in the feed any more; the stored row still learns it
 }
 
 // insert puts it in the feed by sort time, newest first. Under in.mu.
@@ -176,21 +307,36 @@ func (in *Ingest) store(ctx context.Context, it Item) {
 	if cats == nil {
 		cats = []string{}
 	}
-	if _, err := in.DB.Exec(ctx, `INSERT INTO news_items (id, source, trust, region, title, summary, url, guid, cats, published, date_only, seen, ts, lag_ms)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) ON CONFLICT (id) DO NOTHING`,
+	var conf *time.Time
+	if it.Confirmed != 0 {
+		t := bus.FromMs(it.Confirmed)
+		conf = &t
+	}
+	tags, rules := it.Tags, it.Rules
+	if tags == nil {
+		tags = []string{}
+	}
+	if rules == nil {
+		rules = []string{}
+	}
+	if _, err := in.DB.Exec(ctx, `INSERT INTO news_items (id, source, trust, region, title, summary, url, guid, cats, published, date_only, seen, ts, lag_ms,
+			impact, tags, rules, backfill, confirmed)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) ON CONFLICT (id) DO NOTHING`,
 		it.ID, it.Source, it.Trust, it.Region, it.Title, it.Summary, it.URL, it.GUID, cats, pub, it.DateOnly,
-		bus.FromMs(it.Seen), bus.FromMs(it.TS), lag); err != nil {
+		bus.FromMs(it.Seen), bus.FromMs(it.TS), lag, it.Impact, tags, rules, it.Backfill, conf); err != nil {
 		slog.Warn("newsmon: news_items insert", "err", err)
 	}
 }
 
 // Seed reloads the last DedupeTTL of headlines, so a restart neither repeats
-// them nor starts with an empty feed.
+// them nor starts with an empty feed (nor forgets a CAUTION a headline holds).
+// They are rescored with the rules in force; the model's scores are kept.
 func (in *Ingest) Seed(ctx context.Context, now time.Time) error {
 	if in.DB == nil {
 		return nil
 	}
-	rows, err := in.DB.Query(ctx, `SELECT id, source, trust, region, title, summary, url, guid, cats, published, date_only, seen, ts, lag_ms, also
+	rows, err := in.DB.Query(ctx, `SELECT id, source, trust, region, title, summary, url, guid, cats, published, date_only, seen, ts, lag_ms, also,
+			backfill, confirmed, llm
 		FROM news_items WHERE seen >= $1 ORDER BY seen`, now.Add(-in.Cfg.DedupeTTL))
 	if err != nil {
 		return err
@@ -204,9 +350,20 @@ func (in *Ingest) Seed(ctx context.Context, now time.Time) error {
 		var pub *time.Time
 		var seen, ts time.Time
 		var lag *int64
+		var conf *time.Time
+		var llm []byte
 		if err := rows.Scan(&it.ID, &it.Source, &it.Trust, &it.Region, &it.Title, &it.Summary, &it.URL, &it.GUID, &it.Cats,
-			&pub, &it.DateOnly, &seen, &ts, &lag, &it.Also); err != nil {
+			&pub, &it.DateOnly, &seen, &ts, &lag, &it.Also, &it.Backfill, &conf, &llm); err != nil {
 			return err
+		}
+		if conf != nil {
+			it.Confirmed = bus.Ms(*conf)
+		}
+		if len(llm) > 0 {
+			var sc LLMScore
+			if json.Unmarshal(llm, &sc) == nil {
+				it.LLM = &sc
+			}
 		}
 		if pub != nil {
 			it.Pub = bus.Ms(*pub)
@@ -224,6 +381,7 @@ func (in *Ingest) Seed(ctx context.Context, now time.Time) error {
 		if len(it.Cats) == 0 {
 			it.Cats = nil
 		}
+		in.classify(&it)
 		in.ded.Check(&it)
 		in.insert(it)
 		n++
@@ -251,7 +409,10 @@ func (in *Ingest) Snapshot(now time.Time) (Feed, bool) {
 	in.mu.Lock()
 	defer in.mu.Unlock()
 	in.ded.Prune(now)
-	f := Feed{TS: bus.Ms(now), Items: slices.Clone(in.items), Sources: make([]SourceStatus, 0, len(in.order))}
+	f := Feed{TS: bus.Ms(now), Items: slices.Clone(in.items), Sources: make([]SourceStatus, 0, len(in.order)), RulesErr: in.rulesErr}
+	if in.rules != nil {
+		f.Rules = len(in.rules.Rules)
+	}
 	if f.Items == nil {
 		f.Items = []Item{}
 	}

@@ -195,6 +195,27 @@ news:
       - {id: et_stocks,   name: ET Stocks,         trust: media,    region: IN, enabled: false, url: "https://economictimes.indiatimes.com/markets/stocks/rssfeeds/2146842.cms",
          note: "answered only in the first verification round"}
       - {id: paid,        name: Paid news API,     trust: media,    region: IN, enabled: false, kind: paid, note: "stub for a licensed API (Finnhub, Marketaux); never polled"}
+  classify:
+    # Each headline gets an impact 0-100 from config/news/rules.yaml (edit it;
+    # newsmon reloads it). A fresh headline at or above caution_impact from a
+    # trusted source, or from media once `corroborate` distinct sources carry it,
+    # holds the risk state at CAUTION for caution_for. Never a trade signal.
+    rules: config/news/rules.yaml
+    caution_impact: 80
+    caution_for: 10m
+    trusted: [official, exchange]
+    corroborate: 2
+    fresh: 30m                   # published longer ago than this when seen: no hold
+    llm:
+      # Optional second opinion that can only raise an impact. Off by default;
+      # needs the key in the environment variable named by key_env.
+      enabled: false
+      model: claude-haiku-5-5
+      key_env: ANTHROPIC_API_KEY
+      url: "https://api.anthropic.com/v1/messages"
+      min_rule: 40               # only headlines the rules already score this high
+      per_hour: 60
+      timeout: 10s
 
 # Daily timetable for `jobs schedule`, IST. trading_day_only skips weekends and holidays.
 schedule:
