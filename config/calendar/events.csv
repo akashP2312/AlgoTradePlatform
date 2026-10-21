@@ -1,0 +1,5 @@
+# Scheduled market events that pmt-event marks on the expiry segment they fall in.
+# EVERY ROW HERE IS TO VERIFY against the official source (RBI MPC schedule, Union
+# Budget date, election results) before relying on it. Nothing is added automatically.
+# underlying: an index name, or * for all.
+date,underlying,name

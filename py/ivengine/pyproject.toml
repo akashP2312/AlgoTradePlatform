@@ -18,6 +18,7 @@ riskengine = "pmt_iv.risksvc:main"
 pmt-iv-eod = "pmt_iv.eodiv:main"
 pmt-vol = "pmt_iv.vol:main"
 pmt-ivhist = "pmt_iv.ivhist:main"
+pmt-event = "pmt_iv.event:main"
 pmt-daily = "pmt_iv.daily:main"
 
 [dependency-groups]

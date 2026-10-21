@@ -1,8 +1,8 @@
 """pmt-daily: runs the Python EOD jobs once a trading day, after the Go jobs they read.
 
 The Go scheduler (jobs schedule) runs only Go jobs and its image has no Python, so this
-small loop in the ivengine image runs pmt-iv-eod, pmt-vol and pmt-ivhist from config's
-pyschedule: each entry falls due at its time IST on a trading day, then waits until every job in
+small loop in the ivengine image runs the Python ones (COMMANDS) from config's pyschedule:
+each entry falls due at its time IST on a trading day, then waits until every job in
 its `after` list has finished ok today (job_runs, written by the Go scheduler), and runs
 once. A run is recorded in job_runs like a Go job's, so the SYS page shows it. An entry
 that already has a run today, ok or not, is not run again: rerun it by hand. One still
@@ -28,7 +28,7 @@ from .eodiv import database_url
 log = logging.getLogger("pmt-daily")
 
 # The commands a pyschedule entry may name; config picks times, not programs.
-COMMANDS = {"iv-eod": ["pmt-iv-eod"], "vol": ["pmt-vol"], "ivhist": ["pmt-ivhist"]}
+COMMANDS = {"iv-eod": ["pmt-iv-eod"], "vol": ["pmt-vol"], "ivhist": ["pmt-ivhist"], "event": ["pmt-event"]}
 TICK = 30.0
 DETAIL = 500
 
