@@ -16,6 +16,7 @@ dependencies = [
 ivengine = "pmt_iv.service:main"
 riskengine = "pmt_iv.risksvc:main"
 pmt-iv-eod = "pmt_iv.eodiv:main"
+pmt-vol = "pmt_iv.vol:main"
 
 [dependency-groups]
 dev = ["pytest>=8"]
