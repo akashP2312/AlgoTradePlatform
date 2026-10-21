@@ -3,9 +3,13 @@ with Gatheral's butterfly check, and the ATM / 25-delta skew read off it.
 
   w(k) = a + b (rho (k - m) + sqrt((k - m)^2 + s^2)),  k = ln(K / F),  w = iv^2 T
 
-A fit that fails to converge, misses the quotes by more than max_rmse in vol, or
-shows butterfly arbitrage is reported with ok = false; the skew then falls back
-to interpolating the raw ivs, so the screens never show a number from a bad fit.
+A fit that fails, misses the quotes by more than max_rmse in vol, or shows
+butterfly arbitrage is reported with ok = false; the skew then falls back to
+interpolating the raw ivs, so the screens never show a number from a bad fit.
+Butterfly arbitrage is checked over the quoted strikes widened by ARB_MARGIN, which
+covers the risk engine's spot shocks: SVI's extrapolation far past the last quote
+says nothing about the market, and Gatheral's condition fails out there on fits
+that match every quote.
 """
 
 from __future__ import annotations
@@ -20,6 +24,8 @@ from . import black76
 
 MIN_POINTS = 5
 MAX_RMSE = 0.02  # in vol (2 vol points)
+ARB_MARGIN = 0.25  # in log-moneyness, past the outermost quotes
+ARB_PENALTY = 1.0  # weight of a negative g against a total-variance miss
 _GRID = np.linspace(-1.5, 1.5, 301)
 
 
@@ -76,20 +82,44 @@ def fit_svi(k: list[float], iv: list[float], T: float, max_rmse: float = MAX_RMS
     for rho0 in (-0.5, 0.0):
         x0 = [max(wmin * 0.9, 1e-6), 0.1, rho0, 0.0, 0.1]
         try:
-            r = least_squares(resid, x0, bounds=(lo, hi), method="trf", max_nfev=2000)
+            r = least_squares(resid, x0, bounds=(lo, hi), method="trf", x_scale="jac", max_nfev=2000)
         except (ValueError, FloatingPointError):
             continue
         if best is None or r.cost < best.cost:
             best = r
-    if best is None or not best.success:
+    # Status 0 is the evaluation limit, not a failure: with quotes a few percent
+    # either side of the money the five parameters trade off along a flat valley
+    # and the solver crawls along it long after the fit is good. The rmse and
+    # arbitrage checks below judge the result either way.
+    if best is None or not (best.success or best.status == 0) or not np.all(np.isfinite(best.x)):
         return Fit(None, None, False, ["fit"])
+    grid = np.linspace(ka.min() - ARB_MARGIN, ka.max() + ARB_MARGIN, 301)
+
+    def butterfly(svi: SVI) -> bool:
+        return bool(np.any(svi.w(grid) <= 0) or np.any(svi.g(grid) < -1e-9))
+
     svi = SVI(*map(float, best.x))
+    if butterfly(svi):
+        # Refit from there with the density condition as a penalty: the free fit
+        # often bends the wing just past the last quote, where nothing pins it.
+        def penalised(p):
+            q = SVI(*p)
+            w = q.w(grid)
+            g = np.where(w > 0, q.g(grid), -1.0)
+            return np.concatenate([resid(p), ARB_PENALTY * np.minimum(g - 1e-4, 0.0)])
+
+        try:
+            r = least_squares(penalised, best.x, bounds=(lo, hi), method="trf", x_scale="jac", max_nfev=2000)
+            if (r.success or r.status == 0) and np.all(np.isfinite(r.x)) and not butterfly(SVI(*r.x)):
+                svi = SVI(*map(float, r.x))
+        except (ValueError, FloatingPointError):
+            pass
     wm = svi.w(ka)
     if np.any(wm <= 0):
         return Fit(svi, None, False, ["negative"])
     rmse = float(np.sqrt(np.mean((np.sqrt(wm / T) - va) ** 2)))
     arb = []
-    if np.any(svi.w(_GRID) <= 0) or np.any(svi.g(_GRID) < -1e-9):
+    if butterfly(svi):
         arb.append("butterfly")
     if rmse > max_rmse:
         arb.append("rmse")

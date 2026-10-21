@@ -1,4 +1,6 @@
+import json
 import math
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -119,3 +121,17 @@ def test_vix_stops_after_two_zero_bids():
     t = vix.term_variance(qs, m, r)
     full = vix.term_variance(_strip(25000, m, 0.15, r), m, r)
     assert t.strikes < full.strikes
+
+
+def test_svi_fits_live_smiles():
+    # OTM ivs from 2026-10-21's session that the fit used to reject: the solver
+    # hit its evaluation limit on a good fit, or the free fit bent the call wing
+    # into butterfly arbitrage just past the last quote.
+    data = json.loads((Path(__file__).parent / "data" / "smiles_20261021.json").read_text())
+    for name, d in data.items():
+        fit = smile.fit_svi(d["k"], d["iv"], d["T"])
+        assert fit.ok, (name, fit.arb)
+        assert fit.rmse < 0.003, name
+        k = np.asarray(d["k"])
+        grid = np.linspace(k.min() - smile.ARB_MARGIN, k.max() + smile.ARB_MARGIN, 301)
+        assert fit.svi.g(grid).min() >= -1e-9, name

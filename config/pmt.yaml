@@ -49,7 +49,7 @@ universe:
     - "NSE:INDIA VIX"
     - "CDS:USDINR:FUT:1"
     - "MCX:CRUDEOIL:FUT:1"
-    - "NSEIX:GIFT NIFTY:FUT:1"      # verify that Kite lists GIFT Nifty, and under which name
+    - "NSEIX:GIFT NIFTY"            # an index on NSE IX in Kite's list, not a future
   # NSE index constituent CSVs (niftyindices.com format); every Symbol is streamed as EQ.
   constituents:
     - config/constituents/nifty50.csv

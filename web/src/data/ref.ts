@@ -166,7 +166,10 @@ export function resolve(sec: string, args: string[] = [], r: Ref | null = ref): 
     if (!f) return { error: `${sec} has no such future` };
     return pick(f);
   }
-  const base = mine.find((i) => i.k === "IDX") ?? mine.find((i) => i.k === "EQ")!;
+  // A stock is listed on both NSE and BSE; the ticker streams the NSE line.
+  const base = mine.find((i) => i.k === "IDX")
+    ?? mine.find((i) => i.k === "EQ" && i.c.startsWith("NSE|"))
+    ?? mine.find((i) => i.k === "EQ")!;
   return pick(base);
 }
 
