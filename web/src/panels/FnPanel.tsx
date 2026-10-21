@@ -13,6 +13,7 @@ import { RiskPanel } from "./RiskPanel";
 import { QPanel } from "./QPanel";
 import { StrdPanel } from "./StrdPanel";
 import { SysPanel } from "./SysPanel";
+import { VolPanel } from "./VolPanel";
 import { HelpPanel, Placeholder, WorkspacesPanel } from "./misc";
 
 export function FnPanel({ params, api }: IDockviewPanelProps<PanelParams>) {
@@ -35,6 +36,7 @@ export function FnPanel({ params, api }: IDockviewPanelProps<PanelParams>) {
       case "GP": return <GpPanel sec={sec} args={params.args} />;
       case "OMON": return <OmonPanel sec={sec} args={params.args} setArgs={setArgs} />;
       case "STRD": return <StrdPanel sec={sec} args={params.args} setArgs={setArgs} />;
+      case "VOL": return <VolPanel sec={sec} />;
       case "POS": return <PosPanel />;
       case "RISK": return <RiskPanel />;
       case "BOT": return <BotPanel />;

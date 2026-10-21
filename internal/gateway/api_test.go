@@ -49,6 +49,9 @@ func TestAPIValidation(t *testing.T) {
 		{"/api/oi0?und=NIFTY&x=2026-10-27", 503},
 		{"/api/oi0?und=NIFTY", 400},
 		{"/api/oi0?und=nifty;drop&x=2026-10-27", 400},
+		{"/api/vol?und=NIFTY", 503},
+		{"/api/vol", 400},
+		{"/api/vol?und=nifty;drop", 400},
 	}
 	for _, c := range cases {
 		if code, body := apiGet(t, a, c.path); code != c.code {
