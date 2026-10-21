@@ -53,7 +53,7 @@ func (l *Level) UnmarshalJSON(b []byte) error {
 // Reason is one thing holding the state above NORMAL. Times are epoch ms.
 type Reason struct {
 	Level  Level  `json:"level"`
-	Kind   string `json:"kind"` // "event" or "headline"; market stress comes later
+	Kind   string `json:"kind"` // "event", "headline" or "vix"
 	Event  string `json:"event,omitempty"`
 	Item   string `json:"item,omitempty"`   // the headline's id
 	Source string `json:"source,omitempty"` // and its source

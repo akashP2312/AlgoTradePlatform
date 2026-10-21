@@ -19,6 +19,23 @@ damp:
         may, could, might, fears, concerns, bets, hopes, odds, outlook, prediction,
         should you, what investors should, experts, "re:\\?"]
 
+# Tone: each title gets -1..+1 from these phrases, shown in the feed and as the
+# feed's recent average. It is context only: it never changes the risk state
+# and never says which way to trade. A phrase counts the other way when a
+# `negate` phrase is in the three words before it ("not a crash").
+sentiment:
+  negative: [fall, falls, fell, drops, dropped, slips, slipped, slides, slid, declines, declined, tumbles, tumbled,
+             plunges, plunged, slumps, slumped, sinks, sank, tanks, tanked, crash, crashes, crashed, selloff,
+             sell-off, rout, bloodbath, meltdown, losses, record low, all-time low, outflows, downgrade, downgrades,
+             downgraded, cuts outlook, misses, weak, weaker, slowdown, recession, contraction, default,
+             defaults, crisis, panic, fear, fears, war, strikes, attack, sanctions, tariffs, curbs, ban,
+             halt, halted, outage, probe, fraud, scam, layoffs, bearish, worst, inflation surges, hawkish]
+  positive: [rises, rose, gains, gained, climbs, climbed, jumps, jumped, surges, surged, soars, soared, rallies,
+             rallied, rally, rebounds, rebounded, recovers, recovered, record high, all-time high, lifetime high,
+             inflows, upgrade, upgraded, beats, strong, stronger, growth, expands, expansion, boost, boosts,
+             relief, ceasefire, deal, eases, easing, cools, bullish, best, dovish, rate cut, stimulus]
+  negate: [not, no, "re:n't\\b", never, fails to, unlikely to, despite, without, avoids, avert, averts, averted, rules out, denies]
+
 rules:
   # --- Central banks -------------------------------------------------------
   - id: rbi_emergency

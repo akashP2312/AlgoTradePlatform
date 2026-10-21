@@ -27,6 +27,7 @@ type Feed struct {
 	TS       int64          `json:"ts"`
 	Items    []Item         `json:"items"`
 	Sources  []SourceStatus `json:"sources"`
+	Tone     *Tone          `json:"tone,omitempty"`      // the recent headlines' tone; display only
 	Rules    int            `json:"rules"`               // classifier rules in force
 	RulesErr string         `json:"rules_err,omitempty"` // why the rules file was not loaded; the previous rules stay
 }
@@ -177,6 +178,7 @@ func (in *Ingest) trusted(trust string) bool { return slices.Contains(in.Class.T
 func (in *Ingest) classify(it *Item) {
 	sc := in.rules.Classify(it)
 	it.Impact, it.Tags, it.Rules = sc.Impact, sc.Tags, sc.Rules
+	it.Tone, it.Mood = sc.Tone, toneMood(sc.Tone)
 }
 
 // SetRules puts new classifier rules in force and rescores the feed, or, given
@@ -416,6 +418,7 @@ func (in *Ingest) Snapshot(now time.Time) (Feed, bool) {
 	if f.Items == nil {
 		f.Items = []Item{}
 	}
+	f.Tone = feedTone(f.Items, now, in.Class.ToneWindow)
 	for _, id := range in.order {
 		st := *in.status[id]
 		st.lags = nil

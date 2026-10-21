@@ -63,4 +63,27 @@ func TestLoadRepoConfig(t *testing.T) {
 	if _, err := os.Stat(k.Rules); err != nil || !filepath.IsAbs(k.Rules) {
 		t.Fatalf("rules %q: %v", k.Rules, err)
 	}
+	if k.ToneWindow != time.Hour {
+		t.Fatalf("tone_window = %v", k.ToneWindow)
+	}
+	v := c.News.VIX
+	if !v.Enabled || v.Subject != "tick.nse.indiavix._._.idx" || v.DayPct != 15 || v.JumpPct != 7 || v.Window != 15*time.Minute ||
+		v.Level != 25 || v.Persist != 30*time.Second || v.HoldFor != 15*time.Minute || v.Stale != 2*time.Minute {
+		t.Fatalf("vix = %+v", v)
+	}
+	for _, bad := range []VIX{
+		{Enabled: true, Subject: "tick.nse.*", DayPct: 1, HoldFor: 1, Stale: 1},
+		{Enabled: true, Subject: "nse.indiavix", DayPct: 1, HoldFor: 1, Stale: 1},
+		{Enabled: true, Subject: "tick.x", HoldFor: 1, Stale: 1},
+		{Enabled: true, Subject: "tick.x", JumpPct: 5, HoldFor: 1, Stale: 1},
+		{Enabled: true, Subject: "tick.x", DayPct: -1, Level: 20, HoldFor: 1, Stale: 1},
+		{Enabled: true, Subject: "tick.x", Level: 20, Stale: 1},
+	} {
+		if err := bad.check(); err == nil {
+			t.Errorf("accepted %+v", bad)
+		}
+	}
+	if err := (VIX{}).check(); err != nil {
+		t.Errorf("disabled rejected: %v", err)
+	}
 }

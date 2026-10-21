@@ -38,6 +38,8 @@ type Item struct {
 	Backfill  bool      `json:"backfill,omitempty"`  // from a source's first poll
 	Confirmed int64     `json:"confirmed,omitempty"` // when it began to count: a trusted source, or enough sources
 	LLM       *LLMScore `json:"llm,omitempty"`       // the optional model rescore
+	Tone      float64   `json:"tone,omitempty"`      // the lexicon's -1..+1; display only, never the risk state
+	Mood      string    `json:"mood,omitempty"`      // neg, neu or pos
 
 	GUID  string `json:"-"`
 	canon string // CanonURL(URL), the dedupe key

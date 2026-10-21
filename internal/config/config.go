@@ -179,6 +179,23 @@ type News struct {
 	Categories map[string]Window `yaml:"categories"`
 	Feeds      Feeds             `yaml:"feeds"`
 	Classify   Classify          `yaml:"classify"`
+	VIX        VIX               `yaml:"vix"`
+}
+
+// VIX holds the risk state at CAUTION for HoldFor after India VIX spikes: up
+// DayPct on the previous close, up JumpPct within Window, or at Level or above,
+// for Persist of continuous-session ticks in a row. It reads the ticker's stream
+// and never trades on it.
+type VIX struct {
+	Enabled bool          `yaml:"enabled"`
+	Subject string        `yaml:"subject"`  // the ticker's subject for the index; its lastvalue key is this less "tick."
+	DayPct  float64       `yaml:"day_pct"`  // rise on the previous close, %; 0: off
+	JumpPct float64       `yaml:"jump_pct"` // rise on the lowest print within Window, %; 0: off
+	Window  time.Duration `yaml:"window"`
+	Level   float64       `yaml:"level"`    // absolute level; 0: off
+	Persist time.Duration `yaml:"persist"`  // a trigger must hold this long, so one bad print holds nothing
+	HoldFor time.Duration `yaml:"hold_for"` // CAUTION lasts this long after the last triggering tick
+	Stale   time.Duration `yaml:"stale"`    // no tick for this long: the reading is stale and holds nothing new
 }
 
 // Classify scores each headline 0-100 by the rules file and holds the risk state
@@ -192,6 +209,7 @@ type Classify struct {
 	Trusted       []string      `yaml:"trusted"`        // source trusts that count on their own
 	Corroborate   int           `yaml:"corroborate"`    // distinct sources a headline from any other trust needs
 	Fresh         time.Duration `yaml:"fresh"`          // a headline published longer ago than this when seen holds nothing
+	ToneWindow    time.Duration `yaml:"tone_window"`    // news.feed's tone averages headlines this recent; display only
 	LLM           LLM           `yaml:"llm"`
 }
 
@@ -398,12 +416,19 @@ func (c *Config) defaults() {
 	}
 	defI(&k.Corroborate, 2)
 	defD(&k.Fresh, 30*time.Minute)
+	defD(&k.ToneWindow, time.Hour)
 	def(&k.LLM.Model, "claude-haiku-5-5")
 	def(&k.LLM.KeyEnv, "ANTHROPIC_API_KEY")
 	def(&k.LLM.URL, "https://api.anthropic.com/v1/messages")
 	defI(&k.LLM.MinRule, 40)
 	defI(&k.LLM.PerHour, 60)
 	defD(&k.LLM.Timeout, 10*time.Second)
+	v := &c.News.VIX
+	def(&v.Subject, "tick.nse.indiavix._._.idx")
+	defD(&v.Window, 15*time.Minute)
+	defD(&v.Persist, 30*time.Second)
+	defD(&v.HoldFor, 15*time.Minute)
+	defD(&v.Stale, 2*time.Minute)
 	defD(&c.Ticker.KVFlush, time.Second)
 	defI(&c.Recorder.BatchRows, 5000)
 	defD(&c.Recorder.FlushEvery, time.Second)
@@ -493,6 +518,9 @@ func (c *Config) validate() error {
 	if err := c.News.Classify.check(); err != nil {
 		return fmt.Errorf("config: news.classify: %w", err)
 	}
+	if err := c.News.VIX.check(); err != nil {
+		return fmt.Errorf("config: news.vix: %w", err)
+	}
 	for _, s := range c.Schedule {
 		if s.Job == "" || s.At == "" {
 			return fmt.Errorf("config: schedule entry needs at and job")
@@ -549,6 +577,23 @@ func (k Classify) check() error {
 		return fmt.Errorf("llm.url must be https")
 	case l.KeyEnv == "" || l.Model == "":
 		return fmt.Errorf("llm.key_env and llm.model are required")
+	}
+	return nil
+}
+
+func (v VIX) check() error {
+	switch {
+	case !v.Enabled:
+	case !strings.HasPrefix(v.Subject, "tick.") || strings.ContainsAny(v.Subject, "*> "):
+		return fmt.Errorf("subject must be one tick.… subject")
+	case v.DayPct < 0 || v.JumpPct < 0 || v.Level < 0:
+		return fmt.Errorf("day_pct, jump_pct and level must not be negative")
+	case v.DayPct == 0 && v.JumpPct == 0 && v.Level == 0:
+		return fmt.Errorf("enabled with no trigger: set day_pct, jump_pct or level")
+	case v.JumpPct > 0 && v.Window <= 0:
+		return fmt.Errorf("window must be positive")
+	case v.Persist < 0 || v.HoldFor <= 0 || v.Stale <= 0:
+		return fmt.Errorf("hold_for and stale must be positive, persist not negative")
 	}
 	return nil
 }

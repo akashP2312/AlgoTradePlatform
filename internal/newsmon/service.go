@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/nats-io/nats.go"
 
 	"pmt/internal/bus"
 	"pmt/internal/calendar"
@@ -36,7 +37,8 @@ type Service struct {
 	DB     store.Querier
 	Notify *notify.Notifier
 	Cal    *calendar.Calendar
-	Feed   *Ingest // headlines; built in Run when nil
+	Feed   *Ingest   // headlines; built in Run when nil
+	VIX    *VIXWatch // India VIX spikes; built in Run when enabled
 
 	mu       sync.Mutex
 	file     []Event // from the event file
@@ -79,6 +81,12 @@ func (s *Service) Health() (bool, map[string]string) {
 		ok, n, items := s.Feed.Health()
 		d["feed_sources"] = fmt.Sprintf("%d/%d ok", ok, n)
 		d["feed_items"] = fmt.Sprint(items)
+	}
+	if s.VIX != nil {
+		// Like the feed, missing VIX ticks are reported, never a health failure.
+		for k, v := range s.VIX.Health(clock.Now()) {
+			d[k] = v
+		}
 	}
 	return s.started && s.fileErr == "", d
 }
@@ -226,6 +234,40 @@ func same(a, b RiskState) bool {
 	return (an == nil) == (bn == nil) && (an == nil || *an == *bn)
 }
 
+// watchVIX follows the VIX tick subject, starting from its last value in KV.
+func (s *Service) watchVIX(ctx context.Context) error {
+	cfg := s.Cfg.News.VIX
+	s.mu.Lock()
+	if s.VIX == nil {
+		s.VIX = &VIXWatch{Cfg: cfg}
+	}
+	w := s.VIX
+	s.mu.Unlock()
+	observe := func(b []byte) {
+		var t bus.Tick
+		if err := json.Unmarshal(b, &t); err != nil {
+			slog.Warn("newsmon: vix tick", "err", err)
+			return
+		}
+		w.Observe(t, clock.Now())
+	}
+	if kv, err := s.Bus.KV(ctx, bus.KVLast); err == nil {
+		if e, err := kv.Get(ctx, strings.TrimPrefix(cfg.Subject, bus.TickPrefix)); err == nil {
+			observe(e.Value())
+		}
+	}
+	sub, err := s.Bus.NC.Subscribe(cfg.Subject, func(m *nats.Msg) { observe(m.Data) })
+	if err != nil {
+		return err
+	}
+	go func() {
+		<-ctx.Done()
+		_ = sub.Unsubscribe()
+	}()
+	slog.Info("newsmon: watching india vix", "subject", cfg.Subject)
+	return nil
+}
+
 func (s *Service) Run(ctx context.Context) error {
 	kv, err := s.Bus.KV(ctx, bus.KVNews)
 	if err != nil {
@@ -289,6 +331,11 @@ func (s *Service) Run(ctx context.Context) error {
 	if err := StartFeeds(ctx, s.Cfg.News.Feeds, s.Feed); err != nil {
 		slog.Warn("newsmon: feeds", "err", err)
 	}
+	if s.Cfg.News.VIX.Enabled {
+		if err := s.watchVIX(ctx); err != nil {
+			slog.Warn("newsmon: vix", "err", err)
+		}
+	}
 	pubFeed := func(now time.Time, force bool) bool {
 		f, dirty := s.Feed.Snapshot(now)
 		if dirty || force {
@@ -337,7 +384,7 @@ func (s *Service) Run(ctx context.Context) error {
 			lastFeed = now
 		}
 
-		holds := s.Feed.Holds(now)
+		holds := append(s.Feed.Holds(now), s.VIX.Holds(now)...)
 		s.mu.Lock()
 		st := Assess(now, s.all(), s.windows(), holds...)
 		old := s.state

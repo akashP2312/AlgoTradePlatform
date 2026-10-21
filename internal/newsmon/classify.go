@@ -17,8 +17,9 @@ import (
 // is speculative ("ahead of", "preview") and the rule allows damping. The score
 // says how much a headline may move markets, never which way to trade.
 type Rules struct {
-	Damp  Damp   `yaml:"damp"`
-	Rules []Rule `yaml:"rules"`
+	Damp      Damp      `yaml:"damp"`
+	Sentiment Sentiment `yaml:"sentiment"`
+	Rules     []Rule    `yaml:"rules"`
 }
 
 // Damp lowers the score of headlines about what may happen, not what did.
@@ -52,6 +53,7 @@ type Score struct {
 	Impact int
 	Tags   []string
 	Rules  []string // matching rule ids, highest first
+	Tone   float64  // -1..+1, display only
 }
 
 // LoadRules reads and checks the rules file.
@@ -77,6 +79,9 @@ func ParseRules(b []byte) (*Rules, error) {
 	var err error
 	if rs.Damp.re, err = compile(rs.Damp.Any); err != nil {
 		return nil, fmt.Errorf("rules: damp: %w", err)
+	}
+	if err := rs.Sentiment.compile(); err != nil {
+		return nil, fmt.Errorf("rules: %w", err)
 	}
 	seen := map[string]bool{}
 	for i := range rs.Rules {
@@ -210,5 +215,6 @@ func (rs *Rules) Classify(it *Item) Score {
 		sc.Impact = max(sc.Impact, h.n)
 	}
 	sort.Strings(sc.Tags)
+	sc.Tone = rs.Sentiment.Tone(it.Title)
 	return sc
 }

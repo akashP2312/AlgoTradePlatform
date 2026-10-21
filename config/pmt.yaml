@@ -206,6 +206,7 @@ news:
     trusted: [official, exchange]
     corroborate: 2
     fresh: 30m                   # published longer ago than this when seen: no hold
+    tone_window: 60m             # news.feed's headline tone averages this window; display only, never the risk state
     llm:
       # Optional second opinion that can only raise an impact. Off by default;
       # needs the key in the environment variable named by key_env.
@@ -216,6 +217,20 @@ news:
       min_rule: 40               # only headlines the rules already score this high
       per_hour: 60
       timeout: 10s
+  vix:
+    # India VIX from the ticker's stream (it is in ticker extras). A spike holds
+    # CAUTION for hold_for after the last tick that triggered it: up day_pct on
+    # yesterday's close, up jump_pct on the window's low, or at level. Only
+    # continuous-session ticks count, and a trigger must last `persist`.
+    enabled: true
+    subject: tick.nse.indiavix._._.idx
+    day_pct: 15
+    jump_pct: 7
+    window: 15m
+    level: 25
+    persist: 30s
+    hold_for: 15m
+    stale: 2m
 
 # Daily timetable for `jobs schedule`, IST. trading_day_only skips weekends and holidays.
 schedule:
