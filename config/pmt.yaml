@@ -85,7 +85,7 @@ backuprec:
   token_file: ${PMT_TOKEN_FILE}
 
 loaders:
-  user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+  user_agent: "pmt-loaders/1.0 (personal read-only market terminal; +https://github.com/akashP2312/AlgoTradePlatform)"  # honest, never a browser string
   nse_archive: https://nsearchives.nseindia.com    # verify host before relying on it
   niftyindices: https://www.niftyindices.com       # verify host before relying on it
 

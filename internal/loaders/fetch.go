@@ -13,8 +13,8 @@ import (
 // had no session.
 var ErrNotPublished = errors.New("not published")
 
-// Fetcher downloads exchange files with a browser-like User-Agent, which the
-// NSE archive requires.
+// Fetcher downloads exchange files. It sends the configured User-Agent, which
+// names this program honestly rather than posing as a browser.
 type Fetcher struct {
 	UserAgent string
 	Client    *http.Client
