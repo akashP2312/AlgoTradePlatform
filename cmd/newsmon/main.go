@@ -1,6 +1,7 @@
 // Command newsmon turns the scheduled-event calendar into the news risk state
 // (NORMAL, CAUTION, NO_NEW_ENTRIES) on news.risk and the calendar on news.events,
-// and logs each state change. It is a filter only: it never places, changes or
+// and logs each state change. It polls the configured RSS feeds and publishes the
+// deduplicated headlines on news.feed. It is a filter only: it never places, changes or
 // cancels orders.
 package main
 

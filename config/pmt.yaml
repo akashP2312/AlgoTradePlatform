@@ -164,6 +164,37 @@ news:
     MEDIUM: {caution_before: 10m, caution_after: 15m}
   categories:                    # replace the impact's window for a whole category
     expiry: {caution_before: 60m}
+  feeds:
+    # Headline ingestion into news.feed. Each source polls on its own with
+    # conditional GETs, backoff and a circuit breaker, and only where robots.txt
+    # allows. Headlines are context for the risk filter, never a trade signal.
+    poll: 60s
+    timeout: 15s
+    user_agent: "pmt-news/0.1 (+personal RSS reader; polls every 60s)"
+    keep: 200                    # headlines news.feed carries
+    dedupe_ttl: 24h
+    max_age: 48h
+    similar: 0.8                 # title word overlap at which two sources' headlines are one story
+    fails: 5                     # consecutive failures that open a source's breaker
+    cool: 15m
+    backoff_max: 10m
+    robots: 24h
+    sources:
+      - {id: et_markets,  name: ET Markets,        trust: media,    region: IN, enabled: true, url: "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms"}
+      - {id: mint_markets, name: Mint Markets,     trust: media,    region: IN, enabled: true, url: "https://www.livemint.com/rss/markets"}
+      - {id: bs_markets,  name: Business Standard, trust: media,    region: IN, enabled: true, url: "https://www.business-standard.com/rss/markets-106.rss"}
+      - {id: rbi_press,   name: RBI press releases, trust: official, region: IN, enabled: true, url: "https://www.rbi.org.in/pressreleases_rss.xml"}
+      - {id: rbi_notif,   name: RBI notifications, trust: official, region: IN, enabled: true, url: "https://www.rbi.org.in/notifications_rss.xml"}
+      - {id: sebi,        name: SEBI,              trust: official, region: IN, enabled: true, url: "https://www.sebi.gov.in/sebirss.xml", note: "pubDate is a date only"}
+      - {id: fed_press,   name: Fed press releases, trust: official, region: US, enabled: true, tz: America/New_York, url: "https://www.federalreserve.gov/feeds/press_all.xml"}
+      - {id: fed_monetary, name: Fed monetary policy, trust: official, region: US, enabled: true, tz: America/New_York, url: "https://www.federalreserve.gov/feeds/press_monetary.xml"}
+      - {id: pib_finance, name: PIB Finance,       trust: official, region: IN, enabled: false, url: "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3",
+         note: "unverified: returned Hindi items without pubDate, then empty; robots.txt is an HTML error page"}
+      - {id: nse_ann,     name: NSE announcements, trust: exchange, region: IN, enabled: false, title_desc: true, url: "https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml",
+         note: "~370 items, mostly routine filings; title is the company, description the subject. Enable once the classifier filters it"}
+      - {id: et_stocks,   name: ET Stocks,         trust: media,    region: IN, enabled: false, url: "https://economictimes.indiatimes.com/markets/stocks/rssfeeds/2146842.cms",
+         note: "answered only in the first verification round"}
+      - {id: paid,        name: Paid news API,     trust: media,    region: IN, enabled: false, kind: paid, note: "stub for a licensed API (Finnhub, Marketaux); never polled"}
 
 # Daily timetable for `jobs schedule`, IST. trading_day_only skips weekends and holidays.
 schedule:

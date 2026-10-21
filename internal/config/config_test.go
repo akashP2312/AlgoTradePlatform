@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -29,5 +30,27 @@ func TestLoadRepoConfig(t *testing.T) {
 	}
 	if _, err := os.Stat(c.Abs("config/expiry_rules.csv")); err != nil {
 		t.Fatalf("Abs: %v", err)
+	}
+	f := c.News.Feeds
+	if f.Poll.Seconds() != 60 || f.Keep != 200 || f.Similar != 0.8 || f.Fails != 5 || f.Cool.Minutes() != 15 ||
+		!strings.HasPrefix(f.UserAgent, "pmt-news/") || strings.Contains(f.UserAgent, "Mozilla") {
+		t.Fatalf("feeds = %+v", f)
+	}
+	ids, paid := map[string]bool{}, 0
+	for _, s := range f.Sources {
+		if ids[s.ID] {
+			t.Fatalf("duplicate source %s", s.ID)
+		}
+		ids[s.ID] = true
+		if s.Kind == "paid" {
+			paid++
+			continue
+		}
+		if s.Kind != "rss" || !strings.HasPrefix(s.URL, "https://") || s.TZ == "" || s.Trust == "" {
+			t.Fatalf("source %+v", s)
+		}
+	}
+	if !ids["rbi_press"] || !ids["et_markets"] || paid != 1 {
+		t.Fatalf("sources %v, paid %d", ids, paid)
 	}
 }

@@ -36,6 +36,7 @@ type Service struct {
 	DB     store.Querier
 	Notify *notify.Notifier
 	Cal    *calendar.Calendar
+	Feed   *Ingest // headlines; built in Run when nil
 
 	mu      sync.Mutex
 	file    []Event // from the event file
@@ -62,6 +63,12 @@ func (s *Service) Health() (bool, map[string]string) {
 	}
 	if s.expErr != "" {
 		d["expiries_err"] = s.expErr
+	}
+	if s.Feed != nil {
+		// A feed outage is reported, never a health failure: the calendar still filters.
+		ok, n, items := s.Feed.Health()
+		d["feed_sources"] = fmt.Sprintf("%d/%d ok", ok, n)
+		d["feed_items"] = fmt.Sprint(items)
 	}
 	return s.started && s.fileErr == "", d
 }
@@ -221,13 +228,31 @@ func (s *Service) Run(ctx context.Context) error {
 	}
 	s.mu.Lock()
 	s.state = RiskState{State: prev, Since: bus.Ms(now)}
+	if s.Feed == nil {
+		s.Feed = NewIngest(s.Cfg.News.Feeds, s.DB)
+	}
 	s.started = true
 	s.mu.Unlock()
 	pubEvents(now)
+	if err := s.Feed.Seed(ctx, now); err != nil {
+		slog.Warn("newsmon: reload headlines", "err", err)
+	}
+	if err := StartFeeds(ctx, s.Cfg.News.Feeds, s.Feed); err != nil {
+		slog.Warn("newsmon: feeds", "err", err)
+	}
+	pubFeed := func(now time.Time, force bool) bool {
+		f, dirty := s.Feed.Snapshot(now)
+		if dirty || force {
+			pub(SubjFeed, KeyFeed, f)
+		}
+		return dirty || force
+	}
+	pubFeed(now, true)
 
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
 	var lastPub, lastEvents, lastFile, lastExp time.Time
+	lastFeed := now
 	for {
 		select {
 		case <-ctx.Done():
@@ -257,6 +282,9 @@ func (s *Service) Run(ctx context.Context) error {
 		if changed || now.Sub(lastEvents) >= time.Minute {
 			lastEvents = now
 			pubEvents(now)
+		}
+		if d := now.Sub(lastFeed); d >= 2*time.Second && pubFeed(now, d >= time.Minute) {
+			lastFeed = now
 		}
 
 		s.mu.Lock()

@@ -177,6 +177,41 @@ type News struct {
 	Windows map[string]Window `yaml:"windows"`
 	// Categories replace the impact's window for every event in that category.
 	Categories map[string]Window `yaml:"categories"`
+	Feeds      Feeds             `yaml:"feeds"`
+}
+
+// Feeds is newsmon's headline ingestion: each source is polled on its own, with
+// conditional GETs, backoff and a circuit breaker, and only where robots.txt
+// allows it. Headlines are normalized and deduplicated into news.feed.
+type Feeds struct {
+	Poll       time.Duration `yaml:"poll"`        // how often each source is polled
+	Timeout    time.Duration `yaml:"timeout"`     // per request
+	UserAgent  string        `yaml:"user_agent"`  // sent as is; its first word is the robots.txt product token
+	Keep       int           `yaml:"keep"`        // headlines news.feed carries
+	DedupeTTL  time.Duration `yaml:"dedupe_ttl"`  // how long a headline suppresses its duplicates
+	MaxAge     time.Duration `yaml:"max_age"`     // older headlines are ignored
+	Similar    float64       `yaml:"similar"`     // title word overlap (Jaccard) at which two sources' headlines are one story
+	Fails      int           `yaml:"fails"`       // consecutive failures that open a source's breaker
+	Cool       time.Duration `yaml:"cool"`        // how long an open breaker waits before one trial poll
+	BackoffMax time.Duration `yaml:"backoff_max"` // the longest wait between retries before the breaker opens
+	Robots     time.Duration `yaml:"robots"`      // how often robots.txt is reread
+	Sources    []Source      `yaml:"sources"`
+}
+
+// Source is one headline feed.
+type Source struct {
+	ID      string `yaml:"id"`
+	Name    string `yaml:"name"`
+	URL     string `yaml:"url"`
+	Kind    string `yaml:"kind"`    // rss (RSS 2.0, RSS 1.0 or Atom), or paid (a stub, never polled)
+	Trust   string `yaml:"trust"`   // official, exchange or media
+	Region  string `yaml:"region"`  // IN, US, ...
+	Enabled bool   `yaml:"enabled"` // a disabled source is listed but never polled
+	TZ      string `yaml:"tz"`      // for timestamps without a zone; default Asia/Kolkata
+	// TitleDesc appends the description to the title, for feeds whose title alone
+	// says little (NSE's is the company name).
+	TitleDesc bool   `yaml:"title_desc"`
+	Note      string `yaml:"note"`
 }
 
 // Window is the span around an event's time: NO_NEW_ENTRIES from T-NoEntryBefore
@@ -308,6 +343,22 @@ func (c *Config) defaults() {
 			CautionBefore: 30 * time.Minute, CautionAfter: 45 * time.Minute,
 		}}
 	}
+	f := &c.News.Feeds
+	defD(&f.Poll, time.Minute)
+	defD(&f.Timeout, 15*time.Second)
+	def(&f.UserAgent, "pmt-news/0.1 (+personal RSS reader; polls every 60s)")
+	defI(&f.Keep, 200)
+	defD(&f.DedupeTTL, 24*time.Hour)
+	defD(&f.MaxAge, 48*time.Hour)
+	defF(&f.Similar, 0.8)
+	defI(&f.Fails, 5)
+	defD(&f.Cool, 15*time.Minute)
+	defD(&f.BackoffMax, 10*time.Minute)
+	defD(&f.Robots, 24*time.Hour)
+	for i := range f.Sources {
+		def(&f.Sources[i].Kind, "rss")
+		def(&f.Sources[i].TZ, "Asia/Kolkata")
+	}
 	defD(&c.Ticker.KVFlush, time.Second)
 	defI(&c.Recorder.BatchRows, 5000)
 	defD(&c.Recorder.FlushEvery, time.Second)
@@ -391,6 +442,9 @@ func (c *Config) validate() error {
 			return fmt.Errorf("config: news.categories.%s: %w", k, err)
 		}
 	}
+	if err := c.News.Feeds.check(); err != nil {
+		return fmt.Errorf("config: news.feeds: %w", err)
+	}
 	for _, s := range c.Schedule {
 		if s.Job == "" || s.At == "" {
 			return fmt.Errorf("config: schedule entry needs at and job")
@@ -415,4 +469,44 @@ func (c *Config) Abs(p string) string {
 		return p
 	}
 	return filepath.Join(c.Dir, p)
+}
+
+var (
+	sourceKinds  = map[string]bool{"rss": true, "paid": true}
+	sourceTrusts = map[string]bool{"official": true, "exchange": true, "media": true}
+)
+
+func (f Feeds) check() error {
+	if f.Poll < 10*time.Second {
+		return fmt.Errorf("poll must be at least 10s")
+	}
+	if f.Similar <= 0 || f.Similar > 1 {
+		return fmt.Errorf("similar must be in (0, 1]")
+	}
+	if f.Fails < 1 || f.Keep < 1 {
+		return fmt.Errorf("fails and keep must be at least 1")
+	}
+	if strings.TrimSpace(f.UserAgent) == "" {
+		return fmt.Errorf("user_agent is required")
+	}
+	seen := map[string]bool{}
+	for i, s := range f.Sources {
+		switch {
+		case s.ID == "" || strings.ContainsAny(s.ID, ".*> /"):
+			return fmt.Errorf("sources[%d]: id must be one token", i)
+		case seen[s.ID]:
+			return fmt.Errorf("sources: duplicate id %q", s.ID)
+		case !sourceKinds[s.Kind]:
+			return fmt.Errorf("sources %s: kind %q is not rss or paid", s.ID, s.Kind)
+		case !sourceTrusts[s.Trust]:
+			return fmt.Errorf("sources %s: trust %q is not official, exchange or media", s.ID, s.Trust)
+		case s.Kind == "rss" && !strings.HasPrefix(s.URL, "https://") && !strings.HasPrefix(s.URL, "http://"):
+			return fmt.Errorf("sources %s: url must be http(s)", s.ID)
+		}
+		if _, err := time.LoadLocation(s.TZ); err != nil {
+			return fmt.Errorf("sources %s: tz: %w", s.ID, err)
+		}
+		seen[s.ID] = true
+	}
+	return nil
 }

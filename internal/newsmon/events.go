@@ -2,6 +2,11 @@
 // events (and, later, headlines and market stress) into a risk state of NORMAL,
 // CAUTION or NO_NEW_ENTRIES with reasons and an expiry. The state is a filter on
 // new entries, never a trade signal, and nothing here places or closes an order.
+//
+// It also polls RSS and Atom feeds (official, exchange and media sources), each
+// isolated behind its own backoff and circuit breaker and gated by robots.txt,
+// and publishes the deduplicated headlines on news.feed. Headlines do not move
+// the risk state yet.
 package newsmon
 
 import (
