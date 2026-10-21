@@ -59,9 +59,10 @@ var jobs = map[string]job{
 	"merge-backup": {"[--all] [date] load the backup recorder's JSONL for a day", mergeBackup},
 	"harvest":      {"[--force] [date] fetch the day's 1-minute candles", harvestJob},
 	"backfill":     {"[--lookback N --window N] [end] fetch past candles still available", backfill},
-	"bhav":         {"[date] load the NSE F&O bhavcopy", bhav},
+	"bhav":         {"[date] | [--force --pause 3s] from to: load the NSE F&O bhavcopy", bhav},
 	"partoi":       {"[date] load NSE participant-wise open interest", partOI},
 	"vix":          {"[from [to]] load India VIX and index day closes", vix},
+	"ivclose":      {"[date] copy the ivengine's close-of-day smiles from KV analytics into iv_eod", ivclose},
 	"spotvol":      {"[-n] [-ref NIFTY] [days] fit the spot-vol and index betas from index_eod; publish risk.beta", spotvol},
 	"backup":       {"dump the database, encrypted with age, into the outbox", backupJob},
 	"restore-test": {"[--keep] restore the latest dump into a scratch database and check counts", restoreTest},
@@ -587,13 +588,100 @@ func (e *env) saveRaw(kind string, d time.Time, url string, raw []byte) {
 }
 
 func bhav(e *env, args []string) (string, error) {
-	d, _, err := e.tradingDay(args, 0)
-	if errors.Is(err, errNotTrading) {
-		return notTrading(d), nil
+	fl := flag.NewFlagSet("bhav", flag.ContinueOnError)
+	force := fl.Bool("force", false, "with a range, reload days already in eod_contracts")
+	pause := fl.Duration("pause", 3*time.Second, "with a range, wait between NSE requests")
+	if err := fl.Parse(args); err != nil {
+		return "", err
 	}
+	args = fl.Args()
+	if len(args) < 2 {
+		d, _, err := e.tradingDay(args, 0)
+		if errors.Is(err, errNotTrading) {
+			return notTrading(d), nil
+		}
+		if err != nil {
+			return "", err
+		}
+		return e.bhavDay(d)
+	}
+	from, err := day(args, 0)
 	if err != nil {
 		return "", err
 	}
+	to, err := day(args, 1)
+	if err != nil {
+		return "", err
+	}
+	if to.Before(from) {
+		return "", fmt.Errorf("bhav: %s is before %s", args[1], args[0])
+	}
+	cal, err := e.calendar()
+	if err != nil {
+		return "", err
+	}
+	return bhavRange(e.ctx, cal.IsTradingDay, from, to, *pause, func(d time.Time) (bool, error) {
+		if *force {
+			return false, nil
+		}
+		return loaders.HaveEOD(e.ctx, e.pool, d)
+	}, e.bhavDay)
+}
+
+// bhavRange loads each trading day in [from, to] oldest first, one request at a
+// time with pause between them. Days already loaded are skipped, a missing file
+// (404) is counted and passed over, and any other error stops the run so a
+// blocked or changed archive is not hammered.
+func bhavRange(ctx context.Context, trading func(time.Time) bool, from, to time.Time, pause time.Duration,
+	have func(time.Time) (bool, error), load func(time.Time) (string, error)) (string, error) {
+	var loaded, skipped, missing int
+	var missed []string
+	fetched := false
+	for d := from; !d.After(to); d = d.AddDate(0, 0, 1) {
+		if !trading(d) {
+			continue
+		}
+		ok, err := have(d)
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			skipped++
+			continue
+		}
+		if fetched && pause > 0 {
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(pause):
+			}
+		}
+		fetched = true
+		detail, err := load(d)
+		switch {
+		case errors.Is(err, loaders.ErrNotPublished):
+			missing++
+			missed = append(missed, d.Format(time.DateOnly))
+		case err != nil:
+			return "", fmt.Errorf("%s: %w (loaded %d, skipped %d before stopping)", d.Format(time.DateOnly), err, loaded, skipped)
+		default:
+			loaded++
+			slog.Info(detail)
+		}
+	}
+	out := fmt.Sprintf("bhav %s..%s: %d loaded, %d already there, %d not published",
+		from.Format(time.DateOnly), to.Format(time.DateOnly), loaded, skipped, missing)
+	if len(missed) > 0 {
+		if len(missed) > 10 {
+			missed = append(missed[:10], "...")
+		}
+		out += " (" + strings.Join(missed, " ") + ")"
+	}
+	return out, nil
+}
+
+// bhavDay fetches, archives, parses and saves one trading day's bhavcopy.
+func (e *env) bhavDay(d time.Time) (string, error) {
 	url := loaders.BhavURL(e.cfg.Loaders.NSEArchive, d)
 	raw, err := e.fetcher().Get(e.ctx, url)
 	if err != nil {

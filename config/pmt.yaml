@@ -154,6 +154,7 @@ schedule:
   - {at: "06:15", job: instruments, catch_up: true}
   - {at: "06:20", job: calendar, catch_up: true}
   - {at: "15:25", job: sweep, trading_day_only: true}
+  - {at: "15:40", job: ivclose, trading_day_only: true}
   - {at: "15:45", job: gaps, trading_day_only: true}
   - {at: "16:15", job: merge-backup, trading_day_only: true}
   - {at: "17:30", job: harvest, trading_day_only: true}

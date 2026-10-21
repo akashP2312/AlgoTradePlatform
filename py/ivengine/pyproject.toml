@@ -9,11 +9,13 @@ dependencies = [
     "scipy>=1.14",
     "py_lets_be_rational>=1.0.1",
     "pyyaml>=6.0",
+    "psycopg[binary]>=3.2",
 ]
 
 [project.scripts]
 ivengine = "pmt_iv.service:main"
 riskengine = "pmt_iv.risksvc:main"
+pmt-iv-eod = "pmt_iv.eodiv:main"
 
 [dependency-groups]
 dev = ["pytest>=8"]
