@@ -6,8 +6,10 @@ with Gatheral's butterfly check, and the ATM / 25-delta skew read off it.
 A fit that fails to converge, misses the quotes by more than max_rmse in vol, or
 shows butterfly arbitrage over the quoted strikes (plus a margin) is reported with
 ok = false; the skew then falls back to interpolating the raw ivs, so the screens
-never show a number from a bad fit. Arbitrage only out in the far wings, where
-there are no quotes to pin the fit, is reported as wing = true but leaves ok alone.
+never show a number from a bad fit. A free fit with butterfly arbitrage there is
+refit once with the density condition as a penalty before it is judged. Arbitrage
+only out in the far wings, where there are no quotes to pin the fit, is reported as
+wing = true but leaves ok alone.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ MIN_POINTS = 5
 MAX_RMSE = 0.02  # in vol (2 vol points)
 _GRID = np.linspace(-1.5, 1.5, 301)
 MARGIN = 0.1  # in k, beyond the outermost quote, over which the arb checks still apply
+ARB_PENALTY = 1.0  # weight of a negative g against a total-variance miss, in the refit
 
 
 def grid(lo: float, hi: float, n: int = 201) -> np.ndarray:
@@ -98,12 +101,27 @@ def fit_svi(k: list[float], iv: list[float], T: float, max_rmse: float = MAX_RMS
         return Fit(None, None, False, ["fit"])
     svi = SVI(*map(float, best.x))
     kr = (float(ka.min()), float(ka.max()))
+    gk = grid(*kr)
+    if _butterfly(svi, gk):
+        # Refit from there with the density condition as a penalty: the free fit
+        # often bends the wing just past the last quote, where nothing pins it.
+        def penalised(p):
+            q = SVI(*p)
+            g = np.where(q.w(gk) > 0, q.g(gk), -1.0)
+            return np.concatenate([resid(p), ARB_PENALTY * np.minimum(g - 1e-4, 0.0)])
+
+        try:
+            r = least_squares(penalised, best.x, bounds=(lo, hi), method="trf", max_nfev=20000)
+            if r.success and np.all(np.isfinite(r.x)) and not _butterfly(SVI(*r.x), gk):
+                svi = SVI(*map(float, r.x))
+        except (ValueError, FloatingPointError):
+            pass
     wm = svi.w(ka)
     if np.any(wm <= 0):
         return Fit(svi, None, False, ["negative"], k_range=kr)
     rmse = float(np.sqrt(np.mean((np.sqrt(wm / T) - va) ** 2)))
     arb = []
-    if _butterfly(svi, grid(*kr)):
+    if _butterfly(svi, gk):
         arb.append("butterfly")
     if rmse > max_rmse:
         arb.append("rmse")

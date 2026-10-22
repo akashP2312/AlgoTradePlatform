@@ -47,7 +47,7 @@ func main() {
 	hub := gateway.NewHub(cfg.Gateway.Flush)
 	// Subscribe before seeding, so nothing published in between is lost and
 	// the seed never overwrites a newer live value.
-	for _, subj := range []string{bus.SubjTicks, bus.SubjAnalytics, bus.SubjHealth, bus.SubjFeed, bus.SubjBook, bus.SubjRisk, bus.SubjBot} {
+	for _, subj := range []string{bus.SubjTicks, bus.SubjAnalytics, bus.SubjHealth, bus.SubjFeed, bus.SubjBook, bus.SubjRisk, bus.SubjBot, bus.SubjNews} {
 		sub, err := conn.NC.Subscribe(subj, func(m *nats.Msg) { hub.Publish(m.Subject, m.Data) })
 		if err != nil {
 			app.Fatal("subscribe", err)
@@ -55,7 +55,7 @@ func main() {
 		sub.SetPendingLimits(1<<20, 256<<20)
 		defer sub.Unsubscribe()
 	}
-	for bucket, prefix := range map[string]string{bus.KVLast: bus.TickPrefix, bus.KVAnalytics: "analytics.", bus.KVBook: "book.", bus.KVRisk: "risk.", bus.KVBot: "bot."} {
+	for bucket, prefix := range map[string]string{bus.KVLast: bus.TickPrefix, bus.KVAnalytics: "analytics.", bus.KVBook: "book.", bus.KVRisk: "risk.", bus.KVBot: "bot.", bus.KVNews: "news."} {
 		n, err := seed(ctx, conn, hub, bucket, prefix)
 		if err != nil {
 			slog.Warn("gateway: seed from kv failed; panels fill on the next tick", "bucket", bucket, "err", err)
@@ -92,7 +92,7 @@ func main() {
 	counter("pmt_gateway_conflated_total", "Updates replaced by a newer one before a flush.", func() float64 { return float64(hub.Conflated.Load()) })
 	counter("pmt_gateway_dropped_total", "Tabs closed on a write error.", func() float64 { return float64(hub.Dropped.Load()) })
 
-	api := &gateway.API{Universe: cfg.Universe.Underlyings}
+	api := &gateway.API{Universe: cfg.Universe.Underlyings, Last: hub.Last}
 	go func() {
 		// The API waits for Postgres without holding up the live feed.
 		pool, err := app.DBReadOnly(ctx, cfg, 24*time.Hour)

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"><title>Example Atom</title>
+<entry><title type="html">US 10-year yield climbs to 4.6% after jobs data</title>
+<link rel="self" href="https://example.com/feed/entry/1"/>
+<link rel="alternate" href="https://example.com/markets/us-yields-climb"/>
+<id>tag:example.com,2026:1</id>
+<published>2026-10-21T08:45:00+05:30</published>
+<updated>2026-10-21T08:50:00+05:30</updated>
+<summary>Treasury yields rose.</summary>
+<category term="bonds"/><category term="us"/></entry>
+<entry><title>Asian markets mixed ahead of China GDP data</title>
+<link href="https://example.com/markets/asia-mixed"/>
+<id>tag:example.com,2026:2</id>
+<updated>2026-10-21T02:15:00Z</updated>
+<content type="html">&lt;b&gt;Nikkei&lt;/b&gt; up, Hang Seng down.</content></entry>
+<entry><title>Dollar index steady</title>
+<id>tag:example.com,2026:3</id>
+<updated>2026-10-21T03:00:00.250Z</updated></entry>
+</feed>

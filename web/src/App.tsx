@@ -3,8 +3,9 @@
 import { useEffect, useState } from "react";
 import { DockviewReact, type DockviewTheme } from "dockview-react";
 import { CommandLine } from "./cmd/CommandLine";
+import { Notifier } from "./Notifier";
 import { FnPanel } from "./panels/FnPanel";
-import { StatusBar } from "./StatusBar";
+import { RiskBanner, StatusBar } from "./StatusBar";
 import { attach, closeActive, cycleLink, cyclePanel, loadWorkspace, toggleMaximize, workspaces } from "./shell";
 
 const theme: DockviewTheme = { name: "pmt", className: "dockview-theme-pmt", colorScheme: "dark" };
@@ -57,8 +58,10 @@ export function App() {
           onReady={(e) => attach(e.api)}
         />
       </div>
+      <RiskBanner />
       <StatusBar onCommand={() => setCmd(true)} />
       <CommandLine open={cmd} setOpen={setCmd} />
+      <Notifier />
     </div>
   );
 }

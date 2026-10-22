@@ -32,6 +32,7 @@ type Config struct {
 	Gateway   Gateway    `yaml:"gateway"`
 	Risk      Risk       `yaml:"risk"`
 	Bot       Bot        `yaml:"bot"`
+	News      News       `yaml:"news"`
 	Schedule  []Schedule `yaml:"schedule"`
 
 	// Dir is the directory relative paths in the file resolve against (the repo root
@@ -163,6 +164,117 @@ type Bot struct {
 // Ledger is the bot's ledger file.
 func (b Bot) Ledger() string { return filepath.Join(b.Dir, "ledger_"+b.Mode+".db") }
 
+// News drives newsmon's risk filter: the scheduled-event calendar and the windows
+// around each event in which the risk state reads CAUTION or NO_NEW_ENTRIES. It
+// is a filter on new entries, never a trade signal, and newsmon places no orders.
+type News struct {
+	Events   string        `yaml:"events"`    // the editable event file, reloaded when it changes
+	Expiries []string      `yaml:"expiries"`  // underlyings whose listed F&O expiries become events
+	ExpiryAt string        `yaml:"expiry_at"` // the expiry event's time, IST
+	Horizon  time.Duration `yaml:"horizon"`   // how far ahead news.events lists
+	Publish  time.Duration `yaml:"publish"`   // news.risk is republished at least this often
+	// Windows by impact (HIGH, MEDIUM, LOW); an impact with no entry has none.
+	Windows map[string]Window `yaml:"windows"`
+	// Categories replace the impact's window for every event in that category.
+	Categories map[string]Window `yaml:"categories"`
+	Feeds      Feeds             `yaml:"feeds"`
+	Classify   Classify          `yaml:"classify"`
+	VIX        VIX               `yaml:"vix"`
+}
+
+// VIX holds the risk state at CAUTION for HoldFor after India VIX spikes: up
+// DayPct on the previous close, up JumpPct within Window, or at Level or above,
+// for Persist of continuous-session ticks in a row. It reads the ticker's stream
+// and never trades on it.
+type VIX struct {
+	Enabled bool          `yaml:"enabled"`
+	Subject string        `yaml:"subject"`  // the ticker's subject for the index; its lastvalue key is this less "tick."
+	DayPct  float64       `yaml:"day_pct"`  // rise on the previous close, %; 0: off
+	JumpPct float64       `yaml:"jump_pct"` // rise on the lowest print within Window, %; 0: off
+	Window  time.Duration `yaml:"window"`
+	Level   float64       `yaml:"level"`    // absolute level; 0: off
+	Persist time.Duration `yaml:"persist"`  // a trigger must hold this long, so one bad print holds nothing
+	HoldFor time.Duration `yaml:"hold_for"` // CAUTION lasts this long after the last triggering tick
+	Stale   time.Duration `yaml:"stale"`    // no tick for this long: the reading is stale and holds nothing new
+}
+
+// Classify scores each headline 0-100 by the rules file and holds the risk state
+// at CAUTION for a while after a fresh, high-impact one from a trusted source
+// (or from media once enough distinct sources carry it). It never makes a
+// headline a trade signal.
+type Classify struct {
+	Rules         string        `yaml:"rules"`          // the editable rules file, reloaded when it changes
+	CautionImpact int           `yaml:"caution_impact"` // a headline at or above this impact holds CAUTION
+	CautionFor    time.Duration `yaml:"caution_for"`    // for this long after it was seen (or corroborated)
+	Trusted       []string      `yaml:"trusted"`        // source trusts that count on their own
+	Corroborate   int           `yaml:"corroborate"`    // distinct sources a headline from any other trust needs
+	Fresh         time.Duration `yaml:"fresh"`          // a headline published longer ago than this when seen holds nothing
+	ToneWindow    time.Duration `yaml:"tone_window"`    // news.feed's tone averages headlines this recent; display only
+	LLM           LLM           `yaml:"llm"`
+}
+
+// LLM optionally rescores headlines the rules already rate at least MinRule. It
+// can only raise an impact, never lower it, and it is off by default.
+type LLM struct {
+	Enabled bool          `yaml:"enabled"`
+	Model   string        `yaml:"model"`
+	KeyEnv  string        `yaml:"key_env"` // the environment variable holding the API key
+	URL     string        `yaml:"url"`
+	MinRule int           `yaml:"min_rule"` // only headlines the rules score at least this are sent
+	PerHour int           `yaml:"per_hour"` // at most this many requests an hour
+	Timeout time.Duration `yaml:"timeout"`
+}
+
+// Feeds is newsmon's headline ingestion: each source is polled on its own, with
+// conditional GETs, backoff and a circuit breaker, and only where robots.txt
+// allows it. Headlines are normalized and deduplicated into news.feed.
+type Feeds struct {
+	Poll       time.Duration `yaml:"poll"`        // how often each source is polled
+	Timeout    time.Duration `yaml:"timeout"`     // per request
+	UserAgent  string        `yaml:"user_agent"`  // sent as is; its first word is the robots.txt product token
+	Keep       int           `yaml:"keep"`        // headlines news.feed carries
+	DedupeTTL  time.Duration `yaml:"dedupe_ttl"`  // how long a headline suppresses its duplicates
+	MaxAge     time.Duration `yaml:"max_age"`     // older headlines are ignored
+	Similar    float64       `yaml:"similar"`     // title word overlap (Jaccard) at which two sources' headlines are one story
+	Fails      int           `yaml:"fails"`       // consecutive failures that open a source's breaker
+	Cool       time.Duration `yaml:"cool"`        // how long an open breaker waits before one trial poll
+	BackoffMax time.Duration `yaml:"backoff_max"` // the longest wait between retries before the breaker opens
+	Robots     time.Duration `yaml:"robots"`      // how often robots.txt is reread
+	Sources    []Source      `yaml:"sources"`
+}
+
+// Source is one headline feed.
+type Source struct {
+	ID      string `yaml:"id"`
+	Name    string `yaml:"name"`
+	URL     string `yaml:"url"`
+	Kind    string `yaml:"kind"`    // rss (RSS 2.0, RSS 1.0 or Atom), or paid (a stub, never polled)
+	Trust   string `yaml:"trust"`   // official, exchange or media
+	Region  string `yaml:"region"`  // IN, US, ...
+	Enabled bool   `yaml:"enabled"` // a disabled source is listed but never polled
+	TZ      string `yaml:"tz"`      // for timestamps without a zone; default Asia/Kolkata
+	// TitleDesc appends the description to the title, for feeds whose title alone
+	// says little (NSE's is the company name).
+	TitleDesc bool   `yaml:"title_desc"`
+	Note      string `yaml:"note"`
+}
+
+// Window is the span around an event's time: NO_NEW_ENTRIES from T-NoEntryBefore
+// to T+NoEntryAfter, CAUTION from T-CautionBefore to T+CautionAfter.
+type Window struct {
+	NoEntryBefore time.Duration `yaml:"no_entry_before"`
+	NoEntryAfter  time.Duration `yaml:"no_entry_after"`
+	CautionBefore time.Duration `yaml:"caution_before"`
+	CautionAfter  time.Duration `yaml:"caution_after"`
+}
+
+func (w Window) check() error {
+	if w.NoEntryBefore < 0 || w.NoEntryAfter < 0 || w.CautionBefore < 0 || w.CautionAfter < 0 {
+		return fmt.Errorf("durations must not be negative")
+	}
+	return nil
+}
+
 type Schedule struct {
 	At             string `yaml:"at"`
 	Job            string `yaml:"job"`
@@ -260,6 +372,63 @@ func (c *Config) defaults() {
 	if c.Bot.Dir != "" && !filepath.IsAbs(c.Bot.Dir) {
 		c.Bot.Dir = filepath.Join(c.Dir, c.Bot.Dir)
 	}
+	def(&c.News.Events, "config/news/events.yaml")
+	if !filepath.IsAbs(c.News.Events) {
+		c.News.Events = filepath.Join(c.Dir, c.News.Events)
+	}
+	if c.News.Expiries == nil {
+		c.News.Expiries = []string{"NIFTY", "BANKNIFTY"}
+	}
+	def(&c.News.ExpiryAt, "15:30:00")
+	defD(&c.News.Horizon, 92*24*time.Hour)
+	defD(&c.News.Publish, 15*time.Second)
+	if c.News.Windows == nil {
+		c.News.Windows = map[string]Window{"HIGH": {
+			NoEntryBefore: 15 * time.Minute, NoEntryAfter: 15 * time.Minute,
+			CautionBefore: 30 * time.Minute, CautionAfter: 45 * time.Minute,
+		}}
+	}
+	f := &c.News.Feeds
+	defD(&f.Poll, time.Minute)
+	defD(&f.Timeout, 15*time.Second)
+	def(&f.UserAgent, "pmt-news/0.1 (+personal RSS reader; polls every 60s)")
+	defI(&f.Keep, 200)
+	defD(&f.DedupeTTL, 24*time.Hour)
+	defD(&f.MaxAge, 48*time.Hour)
+	defF(&f.Similar, 0.8)
+	defI(&f.Fails, 5)
+	defD(&f.Cool, 15*time.Minute)
+	defD(&f.BackoffMax, 10*time.Minute)
+	defD(&f.Robots, 24*time.Hour)
+	for i := range f.Sources {
+		def(&f.Sources[i].Kind, "rss")
+		def(&f.Sources[i].TZ, "Asia/Kolkata")
+	}
+	k := &c.News.Classify
+	def(&k.Rules, "config/news/rules.yaml")
+	if !filepath.IsAbs(k.Rules) {
+		k.Rules = filepath.Join(c.Dir, k.Rules)
+	}
+	defI(&k.CautionImpact, 80)
+	defD(&k.CautionFor, 10*time.Minute)
+	if k.Trusted == nil {
+		k.Trusted = []string{"official", "exchange"}
+	}
+	defI(&k.Corroborate, 2)
+	defD(&k.Fresh, 30*time.Minute)
+	defD(&k.ToneWindow, time.Hour)
+	def(&k.LLM.Model, "claude-haiku-5-5")
+	def(&k.LLM.KeyEnv, "ANTHROPIC_API_KEY")
+	def(&k.LLM.URL, "https://api.anthropic.com/v1/messages")
+	defI(&k.LLM.MinRule, 40)
+	defI(&k.LLM.PerHour, 60)
+	defD(&k.LLM.Timeout, 10*time.Second)
+	v := &c.News.VIX
+	def(&v.Subject, "tick.nse.indiavix._._.idx")
+	defD(&v.Window, 15*time.Minute)
+	defD(&v.Persist, 30*time.Second)
+	defD(&v.HoldFor, 15*time.Minute)
+	defD(&v.Stale, 2*time.Minute)
 	defD(&c.Ticker.KVFlush, time.Second)
 	defI(&c.Recorder.BatchRows, 5000)
 	defD(&c.Recorder.FlushEvery, time.Second)
@@ -327,6 +496,31 @@ func (c *Config) validate() error {
 	} else if strings.ContainsAny(b.Name, ".*> ") || b.Name == "" {
 		return fmt.Errorf("config: bot.name must be one subject token")
 	}
+	if _, _, _, err := clock.ParseHMS(c.News.ExpiryAt); err != nil {
+		return fmt.Errorf("config: news.expiry_at: %w", err)
+	}
+	for k, w := range c.News.Windows {
+		if k != "HIGH" && k != "MEDIUM" && k != "LOW" {
+			return fmt.Errorf("config: news.windows: %q is not HIGH, MEDIUM or LOW", k)
+		}
+		if err := w.check(); err != nil {
+			return fmt.Errorf("config: news.windows.%s: %w", k, err)
+		}
+	}
+	for k, w := range c.News.Categories {
+		if err := w.check(); err != nil {
+			return fmt.Errorf("config: news.categories.%s: %w", k, err)
+		}
+	}
+	if err := c.News.Feeds.check(); err != nil {
+		return fmt.Errorf("config: news.feeds: %w", err)
+	}
+	if err := c.News.Classify.check(); err != nil {
+		return fmt.Errorf("config: news.classify: %w", err)
+	}
+	if err := c.News.VIX.check(); err != nil {
+		return fmt.Errorf("config: news.vix: %w", err)
+	}
 	for _, s := range c.Schedule {
 		if s.Job == "" || s.At == "" {
 			return fmt.Errorf("config: schedule entry needs at and job")
@@ -351,4 +545,90 @@ func (c *Config) Abs(p string) string {
 		return p
 	}
 	return filepath.Join(c.Dir, p)
+}
+
+var (
+	sourceKinds  = map[string]bool{"rss": true, "paid": true}
+	sourceTrusts = map[string]bool{"official": true, "exchange": true, "media": true}
+)
+
+func (k Classify) check() error {
+	switch {
+	case k.CautionImpact < 1 || k.CautionImpact > 100:
+		return fmt.Errorf("caution_impact must be in 1..100")
+	case k.CautionFor <= 0 || k.Fresh <= 0:
+		return fmt.Errorf("caution_for and fresh must be positive")
+	case k.Corroborate < 1:
+		return fmt.Errorf("corroborate must be at least 1")
+	}
+	for _, t := range k.Trusted {
+		if !sourceTrusts[t] {
+			return fmt.Errorf("trusted: %q is not official, exchange or media", t)
+		}
+	}
+	l := k.LLM
+	switch {
+	case !l.Enabled:
+	case l.MinRule < 0 || l.MinRule > 100:
+		return fmt.Errorf("llm.min_rule must be in 0..100")
+	case l.PerHour < 1 || l.Timeout <= 0:
+		return fmt.Errorf("llm.per_hour and llm.timeout must be positive")
+	case !strings.HasPrefix(l.URL, "https://"):
+		return fmt.Errorf("llm.url must be https")
+	case l.KeyEnv == "" || l.Model == "":
+		return fmt.Errorf("llm.key_env and llm.model are required")
+	}
+	return nil
+}
+
+func (v VIX) check() error {
+	switch {
+	case !v.Enabled:
+	case !strings.HasPrefix(v.Subject, "tick.") || strings.ContainsAny(v.Subject, "*> "):
+		return fmt.Errorf("subject must be one tick.… subject")
+	case v.DayPct < 0 || v.JumpPct < 0 || v.Level < 0:
+		return fmt.Errorf("day_pct, jump_pct and level must not be negative")
+	case v.DayPct == 0 && v.JumpPct == 0 && v.Level == 0:
+		return fmt.Errorf("enabled with no trigger: set day_pct, jump_pct or level")
+	case v.JumpPct > 0 && v.Window <= 0:
+		return fmt.Errorf("window must be positive")
+	case v.Persist < 0 || v.HoldFor <= 0 || v.Stale <= 0:
+		return fmt.Errorf("hold_for and stale must be positive, persist not negative")
+	}
+	return nil
+}
+
+func (f Feeds) check() error {
+	if f.Poll < 10*time.Second {
+		return fmt.Errorf("poll must be at least 10s")
+	}
+	if f.Similar <= 0 || f.Similar > 1 {
+		return fmt.Errorf("similar must be in (0, 1]")
+	}
+	if f.Fails < 1 || f.Keep < 1 {
+		return fmt.Errorf("fails and keep must be at least 1")
+	}
+	if strings.TrimSpace(f.UserAgent) == "" {
+		return fmt.Errorf("user_agent is required")
+	}
+	seen := map[string]bool{}
+	for i, s := range f.Sources {
+		switch {
+		case s.ID == "" || strings.ContainsAny(s.ID, ".*> /"):
+			return fmt.Errorf("sources[%d]: id must be one token", i)
+		case seen[s.ID]:
+			return fmt.Errorf("sources: duplicate id %q", s.ID)
+		case !sourceKinds[s.Kind]:
+			return fmt.Errorf("sources %s: kind %q is not rss or paid", s.ID, s.Kind)
+		case !sourceTrusts[s.Trust]:
+			return fmt.Errorf("sources %s: trust %q is not official, exchange or media", s.ID, s.Trust)
+		case s.Kind == "rss" && !strings.HasPrefix(s.URL, "https://") && !strings.HasPrefix(s.URL, "http://"):
+			return fmt.Errorf("sources %s: url must be http(s)", s.ID)
+		}
+		if _, err := time.LoadLocation(s.TZ); err != nil {
+			return fmt.Errorf("sources %s: tz: %w", s.ID, err)
+		}
+		seen[s.ID] = true
+	}
+	return nil
 }

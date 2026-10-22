@@ -1,0 +1,211 @@
+# Headline classifier rules for newsmon. Edit freely: newsmon rereads this file
+# when it changes and rescores the headlines it holds. A bad edit is rejected
+# and the previous rules stay in force (the error shows in news.feed).
+#
+# Each headline gets an impact 0-100: the highest of the rules it matches, less
+# damp.by when its title is speculative and the rule allows damping. At
+# news.classify.caution_impact (80) a fresh headline from a trusted source, or
+# from media once enough distinct sources carry it, holds CAUTION for a while.
+# The score is how much a headline may move markets, never which way to trade.
+#
+# A rule matches when its text (title, or title_summary) has any of `any`, all
+# of `all` and none of `not`. Phrases match whole words, ignoring case; "re:"
+# starts a regular expression (Go syntax, case-insensitive). trust/sources limit
+# a rule to some feeds. no_damp: speculative wording does not lower it.
+
+damp:
+  by: 30
+  any: [ahead of, preview, what to expect, explained, explainer, likely to, expected to,
+        may, could, might, fears, concerns, bets, hopes, odds, outlook, prediction,
+        should you, what investors should, experts, "re:\\?"]
+
+# Tone: each title gets -1..+1 from these phrases, shown in the feed and as the
+# feed's recent average. It is context only: it never changes the risk state
+# and never says which way to trade. A phrase counts the other way when a
+# `negate` phrase is in the three words before it ("not a crash").
+sentiment:
+  negative: [fall, falls, fell, drops, dropped, slips, slipped, slides, slid, declines, declined, tumbles, tumbled,
+             plunges, plunged, slumps, slumped, sinks, sank, tanks, tanked, crash, crashes, crashed, selloff,
+             sell-off, rout, bloodbath, meltdown, losses, record low, all-time low, outflows, downgrade, downgrades,
+             downgraded, cuts outlook, misses, weak, weaker, slowdown, recession, contraction, default,
+             defaults, crisis, panic, fear, fears, war, strikes, attack, sanctions, tariffs, curbs, ban,
+             halt, halted, outage, probe, fraud, scam, layoffs, bearish, worst, inflation surges, hawkish]
+  positive: [rises, rose, gains, gained, climbs, climbed, jumps, jumped, surges, surged, soars, soared, rallies,
+             rallied, rally, rebounds, rebounded, recovers, recovered, record high, all-time high, lifetime high,
+             inflows, upgrade, upgraded, beats, strong, stronger, growth, expands, expansion, boost, boosts,
+             relief, ceasefire, deal, eases, easing, cools, bullish, best, dovish, rate cut, stimulus]
+  negate: [not, no, "re:n't\\b", never, fails to, unlikely to, despite, without, avoids, avert, averts, averted, rules out, denies]
+
+rules:
+  # --- Central banks -------------------------------------------------------
+  - id: rbi_emergency
+    impact: 95
+    tags: [rbi, rates, unscheduled]
+    no_damp: true
+    all: ["re:\\b(rbi|reserve bank|mpc)\\b"]
+    any: [emergency, unscheduled, off-cycle, inter-meeting, surprise rate, surprise cut, surprise hike]
+    not: [unscheduled holiday]
+  - id: rbi_rate_action
+    impact: 90
+    tags: [rbi, rates]
+    all: ["re:\\b(rbi|reserve bank|mpc)\\b"]
+    any:
+      - "re:\\b(cuts?|hikes?|raises?|lowers?|reduces?|keeps?|holds?|leaves?|retains?|pauses?)\\b[^.]{0,40}\\b(repo|policy|interest|benchmark|key) rates?\\b"
+      - "re:\\b(repo|policy) rates?\\b[^.]{0,30}\\b(unchanged|steady|on hold|cut|hiked|raised|lowered|reduced)\\b"
+      - "re:\\b(\\d+)\\s*(bps|basis points?)\\b[^.]{0,20}\\b(cut|hike|increase|reduction)\\b"
+    not: [minutes]
+  - id: rbi_policy_statement
+    impact: 85
+    tags: [rbi, rates]
+    trust: [official]
+    sources: [rbi_press]
+    any: [Monetary Policy Statement, Governor's Statement, Statement on Developmental and Regulatory Policies]
+    not: [minutes]
+  - id: fed_emergency
+    impact: 95
+    tags: [fed, rates, unscheduled]
+    no_damp: true
+    all: ["re:\\b(fed|fomc|federal reserve|powell)\\b"]
+    any: [emergency, unscheduled, inter-meeting, surprise rate, surprise cut, surprise hike]
+  - id: fed_rate_action
+    impact: 90
+    tags: [fed, rates]
+    all: ["re:\\b(fed|fomc|federal reserve|powell)\\b"]
+    any:
+      - "re:\\b(cuts?|hikes?|raises?|lowers?|keeps?|holds?|leaves?|pauses?)\\b[^.]{0,40}\\b(interest|policy|benchmark|key|funds) rates?\\b"
+      - "re:\\brates?\\b[^.]{0,20}\\b(unchanged|steady|on hold)\\b"
+      - "re:\\b(\\d+)\\s*(bps|basis points?)\\b[^.]{0,20}\\b(cut|hike|increase|reduction)\\b"
+    not: [minutes]
+  - id: fomc_statement
+    impact: 85
+    tags: [fed, rates]
+    trust: [official]
+    sources: [fed_monetary, fed_press]
+    any: [FOMC statement, "re:federal reserve issues fomc"]
+    not: [minutes]
+
+  # --- Market structure -----------------------------------------------------
+  - id: market_halt
+    impact: 95
+    tags: [halt, market]
+    no_damp: true
+    any: [market-wide circuit, market wide circuit, trading halted, halts trading, trading halt,
+          trading suspended, suspends trading, index circuit breaker]
+    not: [lower circuit, upper circuit, "re:\\bstock\\b"]
+  - id: exchange_outage
+    impact: 90
+    tags: [exchange, outage]
+    no_damp: true
+    all: ["re:\\b(nse|bse|exchange|kite|zerodha|cdsl|nsdl|ccil)\\b"]
+    any: [outage, glitch, technical issue, technical glitch, technical snag, disruption, systems down, "re:\\bdown for\\b"]
+    not: [holiday, muhurat]
+  - id: sebi_fo_curbs
+    impact: 80
+    tags: [sebi, derivatives]
+    all: ["re:\\bsebi\\b", "re:\\b(f&o|f ?& ?o|derivatives?|options|futures|index options|weekly expir(y|ies))\\b"]
+    any: [curb, curbs, ban, bans, tighten, tightens, tighter, restrict, restricts, new rules, new framework,
+          lot size, margin, margins, position limit, position limits, discontinue, scrap]
+  - id: special_session
+    impact: 20
+    tags: [calendar]
+    any: [muhurat, special trading session, trading holiday, stock market holiday, shut for trading]
+
+  # --- Policy and tax -------------------------------------------------------
+  - id: tax_change
+    impact: 80
+    tags: [tax]
+    all: ["re:\\b(stt|securities transaction tax|capital gains tax|ltcg|stcg|dividend tax|buyback tax)\\b"]
+    any: [hike, hikes, hiked, raise, raises, raised, increase, increases, increased, cut, cuts, slash, revise,
+          revised, change, changes, scrap, scrapped, imposes, new rate]
+  - id: policy_shock
+    impact: 85
+    tags: [policy]
+    no_damp: true
+    any: [demonetisation, demonetization, capital controls, emergency declared, president's rule]
+  - id: election_result
+    impact: 70
+    tags: [election]
+    any: ["re:\\b(lok sabha|general|assembly|state)( election| poll)?s? results?\\b", exit poll, exit polls]
+
+  # --- Geopolitics ------------------------------------------------------------
+  - id: war_escalation
+    impact: 85
+    tags: [geopolitics]
+    any: ["re:\\b(war breaks out|declares war|air ?strikes?|missile strikes?|military strikes?|military action|invasion|invades)\\b",
+          "re:\\bterror(ist)? attacks?\\b", "re:\\bborder (clash|clashes|firing)\\b"]
+    not: [trade war, price war, war chest, star wars, war room]
+  - id: geopolitical_tension
+    impact: 55
+    tags: [geopolitics]
+    any: [tensions, conflict, sanctions, shipping risks, red sea, strait of hormuz, ceasefire]
+    not: [sanctions list, UNSC]
+
+  # --- Market moves -----------------------------------------------------------
+  - id: index_big_drop
+    impact: 90
+    tags: [market, crash]
+    all: ["re:\\b(sensex|nifty|bank nifty|banknifty|markets?|d-street|dalal street)\\b"]
+    any:
+      - "re:\\b(down|falls?|fell|drops?|dropped|tanks?|tanked|sinks?|sank|slumps?|slumped|plunges?|plunged|crash(es|ed)?|tumbles?|tumbled)\\b[^.|]{0,25}\\b([3-9]|1\\d)(\\.\\d+)?\\s*(%|per ?cent)"
+      - "re:\\b(down|falls?|fell|drops?|dropped|tanks?|tanked|sinks?|sank|slumps?|slumped|plunges?|plunged|crash(es|ed)?|tumbles?|tumbled)\\b[^.|]{0,25}\\b([2-9],?\\d{3})\\s*(pts|points)"
+    not: [from day's high, from the day's high, from intraday high, "re:\\b(midcap|smallcap|stock|shares?)\\b"]
+  - id: index_crash_word
+    impact: 75
+    tags: [market, crash]
+    all: ["re:\\b(sensex|nifty|markets?|d-street|dalal street|stocks)\\b"]
+    any: [crash, crashes, crashed, bloodbath, freefall, black monday, black friday, "re:\\brout\\b", meltdown]
+    not: [from day's high, from the day's high, from intraday high, crash course]
+  - id: vix_spike
+    impact: 70
+    tags: [volatility]
+    all: ["re:\\b(india vix|vix)\\b"]
+    any: [jumps, jumped, surges, surged, spikes, spiked, soars, soared, highest, doubles]
+  - id: global_selloff
+    impact: 60
+    tags: [global, market]
+    all: ["re:\\b(wall street|global (stocks|markets|shares)|asian (shares|stocks|markets)|s&p 500|nasdaq|dow|nikkei)\\b"]
+    any: [plunge, plunges, tumble, tumbles, selloff, sell-off, rout, crash, crashes, slump, slumps, "re:\\bfalls? [3-9]%"]
+  - id: rupee_record_low
+    impact: 70
+    tags: [fx]
+    all: ["re:\\brupee\\b"]
+    any: [record low, all-time low, lifetime low, "re:\\b(crashes|plunges|slumps)\\b"]
+  - id: crude_shock
+    impact: 50
+    tags: [commodities]
+    all: ["re:\\b(crude|oil|brent)\\b"]
+    any: [surge, surges, spike, spikes, jumps, soars, oil shock, "re:\\b\\d+-?(month|year) high\\b"]
+  - id: banking_stress
+    impact: 75
+    tags: [banking]
+    any: [bank run, banking crisis, "re:\\bbank (collapse|collapses|failure|fails)\\b", "re:\\bdefaults? on\\b"]
+  - id: index_move
+    impact: 30
+    tags: [market]
+    all: ["re:\\b(sensex|nifty)\\b"]
+    any: ["re:\\b(\\d{3,},?\\d*)\\s*(pts|points)\\b", "re:\\b(up|down|rises?|falls?|jumps?|surges?|slides?)\\b"]
+
+  # --- Routine and noise (scored low, tagged so the feed can filter) ---------
+  - id: earnings
+    impact: 20
+    tags: [earnings]
+    any: [Q1, Q2, Q3, Q4, quarterly results, net profit, "re:\\bprofit (rises|falls|jumps|drops)\\b"]
+  - id: ipo
+    impact: 10
+    tags: [ipo]
+    any: [IPO, GMP, listing gain, lists at, anchor book]
+  - id: stock_tips
+    impact: 0
+    tags: [noise]
+    any: [stocks to buy, stocks to watch, stock picks, target price, recommends, should you buy, Share Price Live,
+          Smart Talk, VWAP, RSI, open interest, multibagger, stock recommendations, buy or sell]
+  - id: rbi_routine
+    impact: 5
+    tags: [rbi, routine]
+    sources: [rbi_press, rbi_notif]
+    any: [auction, money market operations, Directions, "re:\\bsection 35a\\b", UAPA, penalty, imposes monetary penalty]
+  - id: sebi_routine
+    impact: 5
+    tags: [sebi, routine]
+    sources: [sebi]
+    any: [Recovery Certificate, adjudication order, settlement order, order in the matter, "re:\\bdefaulter"]

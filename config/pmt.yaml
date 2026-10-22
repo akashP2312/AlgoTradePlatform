@@ -49,7 +49,7 @@ universe:
     - "NSE:INDIA VIX"
     - "CDS:USDINR:FUT:1"
     - "MCX:CRUDEOIL:FUT:1"
-    - "NSEIX:GIFT NIFTY:FUT:1"      # verify that Kite lists GIFT Nifty, and under which name
+    - "NSEIX:GIFT NIFTY"            # an index on NSE IX in Kite's list, not a future
   # NSE index constituent CSVs (niftyindices.com format); every Symbol is streamed as EQ.
   constituents:
     - config/constituents/nifty50.csv
@@ -159,6 +159,89 @@ bot:
   run_at: "18:05:00"                # the daily_eod.py run, IST, trading days only
   grace: 30m                        # warn when the run has not landed this long after run_at
   poll: 1m
+
+news:
+  # newsmon: a risk/regime filter on NEW entries, never a trade signal. The
+  # scheduled-event calendar lives in config/news/events.yaml (edit it; newsmon
+  # reloads it). Around each timed event the risk state reads NO_NEW_ENTRIES
+  # and/or CAUTION; GET /api/risk-state serves it, news.risk streams it.
+  events: config/news/events.yaml
+  expiries: [NIFTY, BANKNIFTY]   # listed F&O expiries become MEDIUM "expiry" events
+  expiry_at: "15:30:00"
+  horizon: 2208h                 # news.events lists ~92 days ahead
+  publish: 15s
+  windows:                       # by impact; an impact with no entry has no window
+    HIGH:   {no_entry_before: 15m, no_entry_after: 15m, caution_before: 30m, caution_after: 45m}
+    MEDIUM: {caution_before: 10m, caution_after: 15m}
+  categories:                    # replace the impact's window for a whole category
+    expiry: {caution_before: 60m}
+  feeds:
+    # Headline ingestion into news.feed. Each source polls on its own with
+    # conditional GETs, backoff and a circuit breaker, and only where robots.txt
+    # allows. Headlines are context for the risk filter, never a trade signal.
+    poll: 60s
+    timeout: 15s
+    user_agent: "pmt-news/0.1 (+personal RSS reader; polls every 60s)"
+    keep: 200                    # headlines news.feed carries
+    dedupe_ttl: 24h
+    max_age: 48h
+    similar: 0.8                 # title word overlap at which two sources' headlines are one story
+    fails: 5                     # consecutive failures that open a source's breaker
+    cool: 15m
+    backoff_max: 10m
+    robots: 24h
+    sources:
+      - {id: et_markets,  name: ET Markets,        trust: media,    region: IN, enabled: true, url: "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms"}
+      - {id: mint_markets, name: Mint Markets,     trust: media,    region: IN, enabled: true, url: "https://www.livemint.com/rss/markets"}
+      - {id: bs_markets,  name: Business Standard, trust: media,    region: IN, enabled: true, url: "https://www.business-standard.com/rss/markets-106.rss"}
+      - {id: rbi_press,   name: RBI press releases, trust: official, region: IN, enabled: true, url: "https://www.rbi.org.in/pressreleases_rss.xml"}
+      - {id: rbi_notif,   name: RBI notifications, trust: official, region: IN, enabled: true, url: "https://www.rbi.org.in/notifications_rss.xml"}
+      - {id: sebi,        name: SEBI,              trust: official, region: IN, enabled: true, url: "https://www.sebi.gov.in/sebirss.xml", note: "pubDate is a date only"}
+      - {id: fed_press,   name: Fed press releases, trust: official, region: US, enabled: true, tz: America/New_York, url: "https://www.federalreserve.gov/feeds/press_all.xml"}
+      - {id: fed_monetary, name: Fed monetary policy, trust: official, region: US, enabled: true, tz: America/New_York, url: "https://www.federalreserve.gov/feeds/press_monetary.xml"}
+      - {id: pib_finance, name: PIB Finance,       trust: official, region: IN, enabled: false, url: "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3",
+         note: "unverified: returned Hindi items without pubDate, then empty; robots.txt is an HTML error page"}
+      - {id: nse_ann,     name: NSE announcements, trust: exchange, region: IN, enabled: false, title_desc: true, url: "https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml",
+         note: "~370 items, mostly routine filings; title is the company, description the subject. Enable once the classifier filters it"}
+      - {id: et_stocks,   name: ET Stocks,         trust: media,    region: IN, enabled: false, url: "https://economictimes.indiatimes.com/markets/stocks/rssfeeds/2146842.cms",
+         note: "answered only in the first verification round"}
+      - {id: paid,        name: Paid news API,     trust: media,    region: IN, enabled: false, kind: paid, note: "stub for a licensed API (Finnhub, Marketaux); never polled"}
+  classify:
+    # Each headline gets an impact 0-100 from config/news/rules.yaml (edit it;
+    # newsmon reloads it). A fresh headline at or above caution_impact from a
+    # trusted source, or from media once `corroborate` distinct sources carry it,
+    # holds the risk state at CAUTION for caution_for. Never a trade signal.
+    rules: config/news/rules.yaml
+    caution_impact: 80
+    caution_for: 10m
+    trusted: [official, exchange]
+    corroborate: 2
+    fresh: 30m                   # published longer ago than this when seen: no hold
+    tone_window: 60m             # news.feed's headline tone averages this window; display only, never the risk state
+    llm:
+      # Optional second opinion that can only raise an impact. Off by default;
+      # needs the key in the environment variable named by key_env.
+      enabled: false
+      model: claude-haiku-5-5
+      key_env: ANTHROPIC_API_KEY
+      url: "https://api.anthropic.com/v1/messages"
+      min_rule: 40               # only headlines the rules already score this high
+      per_hour: 60
+      timeout: 10s
+  vix:
+    # India VIX from the ticker's stream (it is in ticker extras). A spike holds
+    # CAUTION for hold_for after the last tick that triggered it: up day_pct on
+    # yesterday's close, up jump_pct on the window's low, or at level. Only
+    # continuous-session ticks count, and a trigger must last `persist`.
+    enabled: true
+    subject: tick.nse.indiavix._._.idx
+    day_pct: 15
+    jump_pct: 7
+    window: 15m
+    level: 25
+    persist: 30s
+    hold_for: 15m
+    stale: 2m
 
 # Daily timetable for `jobs schedule`, IST. trading_day_only skips weekends and holidays.
 schedule:

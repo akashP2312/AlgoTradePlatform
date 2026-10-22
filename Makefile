@@ -6,9 +6,9 @@ COMPOSE   ?= docker compose
 DEV_DB    ?= postgres://postgres:dev@127.0.0.1:55432/pmt?sslmode=disable
 DEV_NATS  ?= nats://127.0.0.1:54222
 
-.PHONY: all build test py-test test-int vet tidy migrate up down logs ps dryrun dryrun-job dryrun-down restore-test clean
+.PHONY: all build test py-test news-gate-test test-int vet tidy migrate up down logs ps dryrun dryrun-job dryrun-down restore-test clean
 
-all: vet test py-test build
+all: vet test py-test news-gate-test build
 
 build:
 	@mkdir -p $(BIN)
@@ -20,6 +20,10 @@ test:
 # The IV engine's tests, in its own uv project.
 py-test:
 	cd py/ivengine && uv run --frozen pytest -q
+
+# The strategy-side news gate and replay: stdlib only, Python 3.9+.
+news-gate-test:
+	python3 -m unittest discover -s py/newsgate
 
 # Integration tests need the dev Postgres and NATS containers.
 test-int:

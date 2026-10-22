@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns="http://purl.org/rss/1.0/" xmlns:dc="http://purl.org/dc/elements/1.1/">
+<channel rdf:about="https://example.org/"><title>RDF</title></channel>
+<item rdf:about="https://example.org/a"><title>Japan core inflation slows for second month</title><link>https://example.org/a</link><dc:date>2026-10-21T05:30:00+09:00</dc:date></item>
+<item rdf:about="https://example.org/b"><title>Bank of Japan holds rates, signals patience</title><link>https://example.org/b</link><dc:date>2026-10-21 08:00:00</dc:date></item>
+</rdf:RDF>

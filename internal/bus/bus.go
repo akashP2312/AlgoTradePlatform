@@ -26,6 +26,7 @@ const (
 	KVBook      = "book"
 	KVRisk      = "risk"
 	KVBot       = "bot"
+	KVNews      = "news"
 
 	SubjTicks     = "tick.>"
 	SubjChain     = "chain.>"
@@ -37,6 +38,7 @@ const (
 	SubjBook      = "book.>" // book.positions, book.margins: the broker's view, every few seconds
 	SubjRisk      = "risk.>" // risk.book from the riskengine, risk.beta from the spotvol job
 	SubjBot       = "bot.>"  // bot.<name>.state from botmon, read off the bot's own ledger
+	SubjNews      = "news.>" // news.risk and news.events from newsmon
 	BookPositions = "book.positions"
 	BookMargins   = "book.margins"
 	SessionKey    = "current"
@@ -128,6 +130,7 @@ func Buckets() []jetstream.KeyValueConfig {
 		{Bucket: KVRisk, Description: "latest book risk and spot-vol beta", History: 1, Storage: jetstream.FileStorage},
 		// Keyed by bot name: the last state botmon read from that bot's ledger.
 		{Bucket: KVBot, Description: "latest state per algo bot", History: 1, Storage: jetstream.FileStorage},
+		{Bucket: KVNews, Description: "newsmon risk state and event calendar", History: 1, Storage: jetstream.FileStorage},
 	}
 }
 

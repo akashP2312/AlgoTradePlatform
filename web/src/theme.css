@@ -95,6 +95,9 @@ tr.stale td, td.stale { color: var(--stale); }
 .statusbar { display: flex; gap: 10px; align-items: center; height: 20px; padding: 0 8px; border-top: 1px solid var(--line); background: var(--bg); font-size: 11px; white-space: nowrap; overflow: hidden; }
 .statusbar .spacer { flex: 1; }
 .statusbar .clock { color: var(--fg); }
+.risk-banner { display: flex; gap: 14px; align-items: center; padding: 2px 8px; font-size: 12px; white-space: nowrap; overflow: hidden; }
+.risk-banner .why { margin-left: auto; opacity: 0.75; }
+.eco-badge { font-size: 10px; padding: 0 3px; margin-left: 4px; border: 1px solid currentColor; border-radius: 2px; }
 
 .cmdline { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35); display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; z-index: 100; }
 .cmdbox { width: min(640px, calc(100vw - 32px)); background: var(--panel); border: 1px solid var(--amber); }
@@ -153,6 +156,22 @@ table.depth tr.tot td { border-top: 1px solid var(--line); color: var(--dim); }
 .omon-grid .ag-cell.dn { color: var(--red); }
 .omon-grid .omon-calls .ag-header-group-cell-label { justify-content: center; color: var(--green); }
 .omon-grid .omon-puts .ag-header-group-cell-label { justify-content: center; color: var(--red); }
+
+/* NEWS */
+.news tr.hold td { background: #1f1a0c; }
+.news td.detail a { color: var(--fg); text-decoration: none; }
+.news td.detail a:hover { text-decoration: underline; }
+.news td.detail a:visited { color: var(--dim); }
+.omon-head button:disabled { opacity: 0.5; cursor: default; }
+
+/* Alerts */
+.toasts { position: fixed; right: 12px; bottom: 28px; display: flex; flex-direction: column; gap: 6px; z-index: 90; width: min(420px, calc(100vw - 24px)); }
+.toast { padding: 6px 10px; border: 1px solid var(--line); border-radius: 2px; background: var(--panel); color: var(--fg); font-size: 12px; cursor: pointer; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5); }
+.toast b { display: block; margin-bottom: 2px; }
+.toast a { color: inherit; }
+.toast.st-warn, .toast.st-bad { border-color: transparent; }
+.toast-ok { border-left: 3px solid var(--green); }
+.toast-foot { margin-top: 3px; font-size: 10px; opacity: 0.7; }
 
 /* VOL */
 .vol h4 { margin: 8px 0 4px; font-weight: normal; color: var(--amber); font-size: 12px; }
