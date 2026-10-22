@@ -153,3 +153,12 @@ table.depth tr.tot td { border-top: 1px solid var(--line); color: var(--dim); }
 .omon-grid .ag-cell.dn { color: var(--red); }
 .omon-grid .omon-calls .ag-header-group-cell-label { justify-content: center; color: var(--green); }
 .omon-grid .omon-puts .ag-header-group-cell-label { justify-content: center; color: var(--red); }
+
+/* VOL */
+.vol h4 { margin: 8px 0 4px; font-weight: normal; color: var(--amber); font-size: 12px; }
+.vol section { min-width: 0; }
+.vol p { margin: 4px 0; }
+.vol-chart { margin: 4px 0; }
+.vol-chart svg { display: block; border-bottom: 1px solid var(--line); }
+.vol-strip { display: flex; gap: 1px; margin-top: 6px; height: 10px; }
+.vol-strip span { flex: 1; min-width: 2px; }
