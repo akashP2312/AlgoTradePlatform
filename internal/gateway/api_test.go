@@ -55,6 +55,9 @@ func TestAPIValidation(t *testing.T) {
 		{"/api/risk-log?from=01-10-2026", 400},
 		{"/api/risk-log?from=2026-10-21&to=2026-10-01", 400},
 		{"/api/risk-log?from=2025-01-01&to=2026-10-21", 400},
+		{"/api/vol?und=NIFTY", 503},
+		{"/api/vol", 400},
+		{"/api/vol?und=nifty;drop", 400},
 	}
 	for _, c := range cases {
 		if code, body := apiGet(t, a, c.path); code != c.code {

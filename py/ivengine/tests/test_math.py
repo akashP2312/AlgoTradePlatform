@@ -85,6 +85,51 @@ def test_svi_flags():
     assert not smile.calendar_arb(far, 0.05, near, 0.1)
 
 
+def test_svi_wing_only_arb_is_info_not_a_failure():
+    # g >= 0 over the quotes (and the margin) but negative far out at |k| ~ 1.
+    true = smile.SVI(-0.004118719781634082, 0.07347267771915938, -0.6933114095072151, 0.026413037513368213, 0.08922424683529111)
+    T, k = 30 / 365, np.linspace(-0.12, 0.08, 15)
+    assert np.any(true.g(smile._GRID) < 0) and np.all(true.g(smile.grid(k.min(), k.max())) >= 0)
+    fit = smile.fit_svi(list(k), list(np.sqrt(true.w(k) / T)), T)
+    assert fit.ok and fit.arb == [] and fit.wing
+    assert fit.k_range == pytest.approx((-0.12, 0.08))
+
+
+def test_svi_butterfly_inside_the_quotes_still_fails():
+    bad = smile.SVI(-0.05, 0.9, -0.99, 0.0, 0.01)
+    k = np.linspace(-0.1, 0.1, 11)
+    assert np.any(bad.g(smile.grid(k.min(), k.max())) < -1e-9)
+    w = np.maximum(bad.w(k), 1e-6)
+    fit = smile.fit_svi(list(k), list(np.sqrt(w / 0.1)), 0.1)
+    assert not fit.ok
+
+
+def test_svi_converges_on_a_noisy_smile():
+    # Two vol-point noise on a 30-day smile: the unscaled fit capped at 2000
+    # evaluations stopped short here and reported "fit".
+    T, k = 30 / 365, np.linspace(-0.12, 0.08, 15)
+    iv = [0.4029, 0.3839, 0.3678, 0.3508, 0.3384, 0.3262, 0.3189, 0.3022, 0.3007, 0.286, 0.2838, 0.286,
+          0.2839, 0.2855, 0.2927]
+    fit = smile.fit_svi(list(k), iv, T)
+    assert fit.ok and fit.rmse < 0.005
+
+
+def test_calendar_arb_on_a_k_range():
+    # Total variance crosses only out at k = -1: flagged on the wide grid, not over the quotes.
+    near = smile.SVI(0.004, 0.02, -0.6, 0.0, 0.1)
+    far = smile.SVI(0.006, 0.02, -0.5, 0.0, 0.1)
+    assert smile.calendar_arb(near, 0.05, far, 0.1)
+    assert not smile.calendar_arb(near, 0.05, far, 0.1, smile.grid(-0.1, 0.1))
+
+
+def test_delta_vol_survives_a_runaway_fit():
+    # A fit whose vol explodes away from the money: the 25-delta strike overflows.
+    sv = smile.SVI(0.5, 10.0, 0.999, -0.5, 1e-4)
+    fit = smile.Fit(sv, 0.0, True, [])
+    sk = smile.Smile(25000.0, 1.5, [0.0], [1.0], fit).skew()
+    assert sk["rr25"] is None
+
+
 def test_smile_falls_back_to_raw_ivs():
     fit = smile.fit_svi([0.0], [0.2], 0.1)
     sm = smile.Smile(25000.0, 0.1, [-0.1, 0.0, 0.1], [0.22, 0.2, 0.19], fit)
@@ -133,5 +178,5 @@ def test_svi_fits_live_smiles():
         assert fit.ok, (name, fit.arb)
         assert fit.rmse < 0.003, name
         k = np.asarray(d["k"])
-        grid = np.linspace(k.min() - smile.ARB_MARGIN, k.max() + smile.ARB_MARGIN, 301)
+        grid = np.linspace(k.min() - smile.MARGIN, k.max() + smile.MARGIN, 301)
         assert fit.svi.g(grid).min() >= -1e-9, name

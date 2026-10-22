@@ -153,6 +153,7 @@ class ExpiryResult:
     svi: smile.SVI | None
     ok: bool
     T: float
+    k_range: tuple[float, float] | None = None
 
 
 class Engine:
@@ -237,13 +238,14 @@ class Engine:
             "tte": _r(T, 8), "cal": _r(Tc, 8), "dte": _r(T * self.clock.per_day, 4), "df": _r(df, 8), "r": r,
             "f": _r(F, 4), "fsrc": fsrc, "s": spot, "fut": _r(fut, 4),
             "atm": _r(sk["atm"]), "rr25": _r(sk["rr25"]), "bf25": _r(sk["bf25"]),
-            "fit": ({**{kk: _r(vv, 8) for kk, vv in fit.svi.params().items()}, "rmse": _r(fit.rmse, 6), "ok": fit.ok, "arb": fit.arb}
+            "fit": ({**{kk: _r(vv, 8) for kk, vv in fit.svi.params().items()}, "rmse": _r(fit.rmse, 6), "ok": fit.ok, "arb": fit.arb,
+                    "wing": fit.wing}
                     if fit.svi is not None else {"ok": False, "arb": fit.arb}),
             "age": {"med": int(statistics.median(ages)), "max": max(ages)} if ages else None,
             "n": len(ivs),
             "rows": rows,
         }
-        return ExpiryResult(payload, fit.svi if fit.ok else None, fit.ok, T)
+        return ExpiryResult(payload, fit.svi if fit.ok else None, fit.ok, T, fit.k_range)
 
     # ---- term structure ---------------------------------------------------
 
@@ -255,7 +257,12 @@ class Engine:
             pl = res.payload
             calarb = None
             if prev is not None and prev.svi is not None and res.svi is not None:
-                calarb = smile.calendar_arb(prev.svi, prev.T, res.svi, res.T)
+                # Compare only where both expiries have quotes (plus the margin).
+                k = None
+                if prev.k_range and res.k_range:
+                    lo, hi = max(prev.k_range[0], res.k_range[0]), min(prev.k_range[1], res.k_range[1])
+                    k = smile.grid(lo, hi) if lo < hi else None
+                calarb = smile.calendar_arb(prev.svi, prev.T, res.svi, res.T, k)
             rows.append({"x": pl["x"], "dte": pl["dte"], "tte": pl["tte"], "f": pl["f"], "atm": pl["atm"],
                          "rr25": pl["rr25"], "bf25": pl["bf25"], "ok": res.ok, "calarb": calarb})
             if res.svi is not None:

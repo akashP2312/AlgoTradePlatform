@@ -1,8 +1,9 @@
 package gateway
 
 // The read-only HTTP API the screens use for what the bus does not carry:
-// contract terms, minute bars and straddle history. Every route is a GET over a
-// read-only pool; nothing here writes, and nothing takes an order.
+// contract terms, minute bars, straddle history and the EOD vol tables. Every
+// route is a GET over a read-only pool; nothing here writes, and nothing takes an
+// order.
 //
 //	/api/ref                    lot and tick sizes, option expiries (live: streamed)
 //	/api/bars?c=<contract>&days=N
@@ -10,6 +11,8 @@ package gateway
 //	/api/oi0?und=NIFTY&x=2026-10-27   each strike's OI at the previous close
 //	/api/risk-state             newsmon's news risk state, for strategies to poll
 //	/api/risk-log?from=2026-10-01&to=2026-10-21   its logged changes, for backtests
+//	/api/vol?und=NIFTY                the EOD vol tables' latest: realized, forecast,
+//	                                  premium, term and skew, events, regime
 
 import (
 	"context"
@@ -51,6 +54,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/oi0", a.oi0)
 	mux.HandleFunc("GET /api/risk-state", a.riskState)
 	mux.HandleFunc("GET /api/risk-log", a.riskLog)
+	mux.HandleFunc("GET /api/vol", a.vol)
 }
 
 // ---- /api/risk-state -------------------------------------------------------
@@ -597,4 +601,104 @@ func lastDay(ctx context.Context, q pgxQuerier, sql string, args ...any) (time.T
 		return time.Time{}, err
 	}
 	return *d, nil
+}
+
+// ---- /api/vol ------------------------------------------------------------
+
+// vol: what the EOD vol jobs (pmt-vol, pmt-ivhist, pmt-event, pmt-regime) last wrote
+// for an index, as the VOL screen shows it. Each part is its table's latest day, so
+// one job running late leaves the others current; every part says its own date.
+func (a *API) vol(w http.ResponseWriter, r *http.Request) {
+	und := r.URL.Query().Get("und")
+	a.serve(w, r, func(ctx context.Context, p *pgxpool.Pool) (any, error) {
+		return queryVol(ctx, p, und)
+	}, func() error {
+		if !undRe.MatchString(und) {
+			return bad("und must be an underlying, e.g. NIFTY")
+		}
+		return nil
+	})
+}
+
+const (
+	volHorizon = 21  // the vrp_eod horizon the screen shows
+	volSeries  = 252 // days of iv30 / VIX / forecast / realized history
+	volLabels  = 60  // days of regime labels
+	volExpiry  = 8   // expiries in the event table
+)
+
+// volParts are the queries behind /api/vol, each with $1 the underlying. Dates come
+// back as text so they read yyyy-mm-dd.
+var volParts = []struct{ key, sql string }{
+	{"rv", `SELECT trade_date::text AS d, win, cc, pk, gk, yz FROM rv_eod
+		WHERE underlying = $1 AND trade_date = (SELECT max(trade_date) FROM rv_eod WHERE underlying = $1)
+		ORDER BY win`},
+	{"har", `SELECT trade_date::text AS d, horizon, fc, lo, hi, rv21, vix FROM har_eod
+		WHERE underlying = $1 AND trade_date = (SELECT max(trade_date) FROM har_eod WHERE underlying = $1)
+		ORDER BY horizon`},
+	{"score", `SELECT asof::text AS d, horizon, model, n, qlike, mse, bias, hit FROM vol_score
+		WHERE underlying = $1 AND asof = (SELECT max(asof) FROM vol_score WHERE underlying = $1)
+		ORDER BY horizon, qlike`},
+	{"vrp", `SELECT trade_date::text AS d, iv30, vix, har_fc, rv21, rv_fwd, iv_ante, iv_post, vix_ante, vix_post,
+		iv_rank, iv_pct, vix_rank, vix_pct, n_iv, n_vix FROM vrp_eod
+		WHERE underlying = $1 AND horizon = ` + strconv.Itoa(volHorizon) + `
+		ORDER BY trade_date DESC LIMIT 1`},
+	// The latest day with an iv30, which can trail the VIX by a session until the
+	// bhavcopy fits are in.
+	{"iv", `SELECT trade_date::text AS d, iv30, iv_ante, iv_post, iv_rank, iv_pct, n_iv FROM vrp_eod
+		WHERE underlying = $1 AND horizon = ` + strconv.Itoa(volHorizon) + ` AND iv30 IS NOT NULL
+		ORDER BY trade_date DESC LIMIT 1`},
+	{"series", `SELECT d, iv30, vix, har_fc, rv21 FROM (
+			SELECT trade_date::text AS d, iv30, vix, har_fc, rv21 FROM vrp_eod
+			WHERE underlying = $1 AND horizon = ` + strconv.Itoa(volHorizon) + `
+			ORDER BY trade_date DESC LIMIT ` + strconv.Itoa(volSeries) + `) s ORDER BY d`},
+	// Today's curve, a week (5 sessions) back and a month (21) back.
+	{"term", `WITH ds AS (
+			SELECT trade_date, row_number() OVER (ORDER BY trade_date DESC) - 1 AS ago
+			FROM (SELECT DISTINCT trade_date FROM ivcm_eod WHERE underlying = $1
+				ORDER BY trade_date DESC LIMIT 22) x)
+		SELECT c.trade_date::text AS d, ds.ago, c.tenor, c.atm_iv, c.rr25, c.bf25, c.atm_rank, c.atm_pct,
+			c.rr25_pct, c.bf25_pct, c.n_hist
+		FROM ivcm_eod c JOIN ds USING (trade_date)
+		WHERE c.underlying = $1 AND ds.ago IN (0, 5, 21)
+		ORDER BY ds.ago, c.tenor`},
+	{"events", `SELECT trade_date::text AS d, expiry::text AS x, dte, atm_iv, implied_move, seg_vol, event_move,
+			hist_move, hist_n, events FROM event_eod
+		WHERE underlying = $1 AND trade_date = (SELECT max(trade_date) FROM event_eod WHERE underlying = $1)
+		ORDER BY dte LIMIT ` + strconv.Itoa(volExpiry)},
+	// How the priced move has compared with the move that followed, by days to expiry
+	// (pmt-event's buckets).
+	{"priced", `SELECT lo, hi, count(*) AS n, avg(implied_move) AS implied, avg(real_move) AS realized,
+			avg((real_move > implied_move)::int)::float8 AS over
+		FROM event_eod e JOIN (VALUES (1, 2), (3, 5), (6, 10), (11, 21), (22, 63)) b(lo, hi)
+			ON e.dte >= b.lo AND e.dte <= b.hi
+		WHERE e.underlying = $1 AND e.real_move IS NOT NULL
+		GROUP BY lo, hi ORDER BY lo`},
+	{"regime", `SELECT trade_date::text AS d, level_src, level_pct, term_slope, rv_ratio, premium, level, term,
+			trend, prem, label, rule FROM regime_eod
+		WHERE underlying = $1 AND label IS NOT NULL ORDER BY trade_date DESC LIMIT 1`},
+	{"labels", `SELECT d, label FROM (
+			SELECT trade_date::text AS d, label FROM regime_eod WHERE underlying = $1 AND label IS NOT NULL
+			ORDER BY trade_date DESC LIMIT ` + strconv.Itoa(volLabels) + `) s ORDER BY d`},
+}
+
+// queryVol returns {und, <part>: [rows]} with every row an object of its columns;
+// a part with no rows is an empty list. vrp, iv and regime hold at most one row.
+func queryVol(ctx context.Context, q pgxQuerier, und string) (any, error) {
+	out := map[string]any{"und": und}
+	for _, part := range volParts {
+		rows, err := q.Query(ctx, part.sql, und)
+		if err != nil {
+			return nil, err
+		}
+		res, err := pgx.CollectRows(rows, pgx.RowToMap)
+		if err != nil {
+			return nil, err
+		}
+		if res == nil {
+			res = []map[string]any{}
+		}
+		out[part.key] = res
+	}
+	return out, nil
 }

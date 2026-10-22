@@ -18,6 +18,13 @@ var eodCols = []string{"trade_date", "contract", "exchange", "underlying", "expi
 	"open", "high", "low", "close", "last", "prev_close", "settle", "underlying_price",
 	"oi", "oi_change", "volume", "volume_unit", "turnover", "trades", "lot_size", "source"}
 
+// HaveEOD reports whether eod_contracts already holds any row for trade date d.
+func HaveEOD(ctx context.Context, pool *pgxpool.Pool, d time.Time) (bool, error) {
+	var ok bool
+	err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM eod_contracts WHERE trade_date = $1)`, dateCol(d)).Scan(&ok)
+	return ok, err
+}
+
 // SaveEOD replaces rows by (trade_date, contract): COPY into a temp table, then
 // one upsert, so a rerun of a day is idempotent.
 func SaveEOD(ctx context.Context, pool *pgxpool.Pool, rows []EODRow) (int64, error) {

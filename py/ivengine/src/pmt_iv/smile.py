@@ -3,13 +3,13 @@ with Gatheral's butterfly check, and the ATM / 25-delta skew read off it.
 
   w(k) = a + b (rho (k - m) + sqrt((k - m)^2 + s^2)),  k = ln(K / F),  w = iv^2 T
 
-A fit that fails, misses the quotes by more than max_rmse in vol, or shows
-butterfly arbitrage is reported with ok = false; the skew then falls back to
-interpolating the raw ivs, so the screens never show a number from a bad fit.
-Butterfly arbitrage is checked over the quoted strikes widened by ARB_MARGIN, which
-covers the risk engine's spot shocks: SVI's extrapolation far past the last quote
-says nothing about the market, and Gatheral's condition fails out there on fits
-that match every quote.
+A fit that fails to converge, misses the quotes by more than max_rmse in vol, or
+shows butterfly arbitrage over the quoted strikes (plus a margin) is reported with
+ok = false; the skew then falls back to interpolating the raw ivs, so the screens
+never show a number from a bad fit. A free fit with butterfly arbitrage there is
+refit once with the density condition as a penalty before it is judged. Arbitrage
+only out in the far wings, where there are no quotes to pin the fit, is reported as
+wing = true but leaves ok alone.
 """
 
 from __future__ import annotations
@@ -24,9 +24,13 @@ from . import black76
 
 MIN_POINTS = 5
 MAX_RMSE = 0.02  # in vol (2 vol points)
-ARB_MARGIN = 0.25  # in log-moneyness, past the outermost quotes
-ARB_PENALTY = 1.0  # weight of a negative g against a total-variance miss
 _GRID = np.linspace(-1.5, 1.5, 301)
+MARGIN = 0.1  # in k, beyond the outermost quote, over which the arb checks still apply
+ARB_PENALTY = 1.0  # weight of a negative g against a total-variance miss, in the refit
+
+
+def grid(lo: float, hi: float, n: int = 201) -> np.ndarray:
+    return np.linspace(lo - MARGIN, hi + MARGIN, n)
 
 
 @dataclass
@@ -61,6 +65,8 @@ class Fit:
     rmse: float | None
     ok: bool
     arb: list[str] = field(default_factory=list)
+    wing: bool = False  # butterfly arbitrage beyond the checked range (info only)
+    k_range: tuple[float, float] | None = None  # the quoted strikes, in k
 
 
 def fit_svi(k: list[float], iv: list[float], T: float, max_rmse: float = MAX_RMSE) -> Fit:
@@ -72,8 +78,12 @@ def fit_svi(k: list[float], iv: list[float], T: float, max_rmse: float = MAX_RMS
     # Weight the wings down a little: their quotes are the widest.
     wt = 1.0 / np.sqrt(1.0 + 4.0 * ka * ka)
 
+    # Scale by the mean total variance so the tolerances mean the same at 2 days
+    # as at 6 months; unscaled, short expiries stop on max_nfev short of the optimum.
+    wbar = float(wa.mean())
+
     def resid(p):
-        return (SVI(*p).w(ka) - wa) * wt
+        return (SVI(*p).w(ka) - wa) * wt / wbar
 
     wmin = float(wa.min())
     lo = [-wmin - 1.0, 1e-6, -0.999, ka.min() - 0.5, 1e-4]
@@ -82,55 +92,53 @@ def fit_svi(k: list[float], iv: list[float], T: float, max_rmse: float = MAX_RMS
     for rho0 in (-0.5, 0.0):
         x0 = [max(wmin * 0.9, 1e-6), 0.1, rho0, 0.0, 0.1]
         try:
-            r = least_squares(resid, x0, bounds=(lo, hi), method="trf", x_scale="jac", max_nfev=2000)
+            r = least_squares(resid, x0, bounds=(lo, hi), method="trf", max_nfev=20000)
         except (ValueError, FloatingPointError):
             continue
-        if best is None or r.cost < best.cost:
+        if r.success and (best is None or r.cost < best.cost):
             best = r
-    # Status 0 is the evaluation limit, not a failure: with quotes a few percent
-    # either side of the money the five parameters trade off along a flat valley
-    # and the solver crawls along it long after the fit is good. The rmse and
-    # arbitrage checks below judge the result either way.
-    if best is None or not (best.success or best.status == 0) or not np.all(np.isfinite(best.x)):
+    if best is None:
         return Fit(None, None, False, ["fit"])
-    grid = np.linspace(ka.min() - ARB_MARGIN, ka.max() + ARB_MARGIN, 301)
-
-    def butterfly(svi: SVI) -> bool:
-        return bool(np.any(svi.w(grid) <= 0) or np.any(svi.g(grid) < -1e-9))
-
     svi = SVI(*map(float, best.x))
-    if butterfly(svi):
+    kr = (float(ka.min()), float(ka.max()))
+    gk = grid(*kr)
+    if _butterfly(svi, gk):
         # Refit from there with the density condition as a penalty: the free fit
         # often bends the wing just past the last quote, where nothing pins it.
         def penalised(p):
             q = SVI(*p)
-            w = q.w(grid)
-            g = np.where(w > 0, q.g(grid), -1.0)
+            g = np.where(q.w(gk) > 0, q.g(gk), -1.0)
             return np.concatenate([resid(p), ARB_PENALTY * np.minimum(g - 1e-4, 0.0)])
 
         try:
-            r = least_squares(penalised, best.x, bounds=(lo, hi), method="trf", x_scale="jac", max_nfev=2000)
-            if (r.success or r.status == 0) and np.all(np.isfinite(r.x)) and not butterfly(SVI(*r.x)):
+            r = least_squares(penalised, best.x, bounds=(lo, hi), method="trf", max_nfev=20000)
+            if r.success and np.all(np.isfinite(r.x)) and not _butterfly(SVI(*r.x), gk):
                 svi = SVI(*map(float, r.x))
         except (ValueError, FloatingPointError):
             pass
     wm = svi.w(ka)
     if np.any(wm <= 0):
-        return Fit(svi, None, False, ["negative"])
+        return Fit(svi, None, False, ["negative"], k_range=kr)
     rmse = float(np.sqrt(np.mean((np.sqrt(wm / T) - va) ** 2)))
     arb = []
-    if butterfly(svi):
+    if _butterfly(svi, gk):
         arb.append("butterfly")
     if rmse > max_rmse:
         arb.append("rmse")
-    return Fit(svi, rmse, not arb, arb)
+    return Fit(svi, rmse, not arb, arb, wing=_butterfly(svi, _GRID), k_range=kr)
 
 
-def calendar_arb(earlier: SVI, T1: float, later: SVI, T2: float) -> bool:
-    """True when total variance falls somewhere between two expiries (T1 < T2)."""
+def _butterfly(svi: SVI, k: np.ndarray) -> bool:
+    return bool(np.any(svi.w(k) <= 0) or np.any(svi.g(k) < -1e-9))
+
+
+def calendar_arb(earlier: SVI, T1: float, later: SVI, T2: float, k: np.ndarray | None = None) -> bool:
+    """True when total variance falls somewhere on k (default the wide grid) between
+    two expiries (T1 < T2)."""
     if T2 <= T1:
         return False
-    return bool(np.any(later.w(_GRID) < earlier.w(_GRID) - 1e-9))
+    k = _GRID if k is None else k
+    return bool(np.any(later.w(k) < earlier.w(k) - 1e-9))
 
 
 class Smile:
@@ -164,7 +172,10 @@ class Smile:
             return None
         K = self.F
         for _ in range(iters):
-            K = black76.strike_for_delta(self.F, self.T, v, delta)
+            try:
+                K = black76.strike_for_delta(self.F, self.T, v, delta)
+            except OverflowError:  # a runaway vol from a far-dated fit: no strike to read
+                return None
             nv = self.iv_strike(K)
             if not nv:
                 return None
